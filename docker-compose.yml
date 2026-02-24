@@ -1,0 +1,10 @@
+services:
+  huiszoeker:
+    build: .
+    container_name: huiszoeker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
