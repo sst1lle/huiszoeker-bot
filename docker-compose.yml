@@ -7,4 +7,13 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+  webinterface:
+    build: .
+    container_name: huiszoeker-web
+    restart: unless-stopped
+    ports:
+      - '5000:5000'
+    volumes:
+      - ./data:/app/data
+    command: python web.py
 
