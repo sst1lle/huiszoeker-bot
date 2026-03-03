@@ -1,13 +1,18 @@
-from curl_cffi import requests
+import os
+import requests
 from bs4 import BeautifulSoup
 
 
 def scrape_huurwoningen(stad='den-haag', min_prijs=0, max_prijs=1200):
-    url = f"https://www.huurwoningen.nl/in/{stad}/?price={min_prijs}-{max_prijs}"
+    target_url = f"https://www.huurwoningen.nl/in/{stad}/?price={min_prijs}-{max_prijs}"
+    api_key = os.getenv('SCRAPERAPI_KEY')
+
+    # render=true omdat huurwoningen.nl JavaScript gebruikt voor de listings
+    url = f"http://api.scraperapi.com?api_key={api_key}&url={target_url}&render=true"
 
     try:
-        print(f"[huurwoningen] Ophalen: {url}", flush=True)
-        r = requests.get(url, impersonate="chrome", timeout=20)
+        print(f"[huurwoningen] Ophalen via ScraperAPI: {target_url}", flush=True)
+        r = requests.get(url, timeout=60)
         print(f"[huurwoningen] HTTP status: {r.status_code}", flush=True)
     except Exception as e:
         print(f"[huurwoningen] ❌ Verbindingsfout: {e}", flush=True)
@@ -15,11 +20,6 @@ def scrape_huurwoningen(stad='den-haag', min_prijs=0, max_prijs=1200):
 
     if r.status_code != 200:
         print(f"[huurwoningen] ⚠️ HTTP {r.status_code}", flush=True)
-        print(f"[huurwoningen] HTML snippet: {r.text[:800]}", flush=True)
-        return []
-
-    if "Just a moment" in r.text:
-        print(f"[huurwoningen] ⚠️ Cloudflare challenge nog actief!", flush=True)
         print(f"[huurwoningen] HTML snippet: {r.text[:800]}", flush=True)
         return []
 

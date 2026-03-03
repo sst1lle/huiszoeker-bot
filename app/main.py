@@ -139,4 +139,4 @@ if __name__ == '__main__':
             except:
                 pass
 
-        time.sleep(90)
+        time.sleep(5400)
