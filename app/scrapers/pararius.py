@@ -6,12 +6,12 @@ BASE_URL = "https://www.pararius.nl"
 
 def scrape_pararius(stad='den-haag', min_prijs=0, max_prijs=1200):
     target_url = f"https://www.pararius.nl/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
-    api_key = os.getenv('SCRAPERAPI_KEY')
+    api_key = os.getenv('SCRAPEDO_KEY')
 
-    url = f"http://api.scraperapi.com?api_key={api_key}&url={target_url}&render=false"
+    url = f"https://api.scrape.do?token={api_key}&url={target_url}"
 
     try:
-        print(f"[pararius] Ophalen via ScraperAPI: {target_url}", flush=True)
+        print(f"[pararius] Ophalen via Scrape.do: {target_url}", flush=True)
         r = requests.get(url, timeout=60)
         print(f"[pararius] HTTP status: {r.status_code}", flush=True)
     except Exception as e:
