@@ -1,3 +1,5 @@
+version: '3.9'
+
 services:
   huiszoeker:
     build: .
@@ -6,8 +8,11 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data       # bestaande data
+      - ./app:/app             # bind mount je code, zodat wijzigingen direct zichtbaar zijn
     shm_size: 512m
+    command: python pararus.py  # start je script automatisch
+
   webinterface:
     build: .
     container_name: huiszoeker-web
@@ -15,6 +20,6 @@ services:
     ports:
       - '5000:5000'
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data       # bestaande data
+      - ./app:/app             # bind mount je code, zodat wijzigingen in web.py direct zichtbaar zijn
     command: python web.py
-
