@@ -1,22 +1,26 @@
-import undetected_chromedriver as uc
+from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import time
 
 
 def scrape_huurwoningen(stad='den-haag', min_prijs=0, max_prijs=1200):
     url = f"https://www.huurwoningen.nl/in/{stad}/?price={min_prijs}-{max_prijs}"
 
-    options = uc.ChromeOptions()
+    options = Options()
+    options.binary_location = "/usr/bin/chromium"
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--single-process")
+    options.add_argument("--no-zygote")
+    options.add_argument("--disable-software-rasterizer")
 
-    driver = uc.Chrome(
-        options=options,
-        headless=True,
-        use_subprocess=False,
-    )
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
 
     woningen = []
 
