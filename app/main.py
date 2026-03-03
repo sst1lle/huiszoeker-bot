@@ -72,51 +72,71 @@ async def stuur_telegram(bericht):
 
 
 if __name__ == '__main__':
-    print("Huiszoekerbot gestart", flush=True)
+    print("🏠 Huiszoekerbot gestart", flush=True)
 
     while True:
         try:
             config = laad_config()
             bestaande = laad_bestaande()
 
-            # ? Scrapen
+            # Scrapen
             pararius_woningen = scrape_pararius(
                 stad=config['stad'],
                 min_prijs=config['min_prijs'],
                 max_prijs=config['max_prijs']
             )
+            print(f"[main] Pararius resultaten: {len(pararius_woningen)}", flush=True)
 
             huurwoningen_woningen = scrape_huurwoningen(
                 stad=config['stad'],
                 min_prijs=config['min_prijs'],
                 max_prijs=config['max_prijs']
             )
+            print(f"[main] Huurwoningen resultaten: {len(huurwoningen_woningen)}", flush=True)
 
-            # ? Nieuwe woningen bepalen
+            # Waarschuw via Telegram als een scraper 0 resultaten geeft
+            if len(pararius_woningen) == 0:
+                asyncio.run(stuur_telegram(
+                    "⚠️ Waarschuwing: Pararius gaf 0 resultaten!\n"
+                    "Mogelijk geblokkeerd of HTML-structuur gewijzigd.\n"
+                    f"Stad: {config['stad']}, Prijs: €{config['min_prijs']}-€{config['max_prijs']}"
+                ))
+
+            if len(huurwoningen_woningen) == 0:
+                asyncio.run(stuur_telegram(
+                    "⚠️ Waarschuwing: Huurwoningen.nl gaf 0 resultaten!\n"
+                    "Mogelijk geblokkeerd of HTML-structuur gewijzigd.\n"
+                    f"Stad: {config['stad']}, Prijs: €{config['min_prijs']}-€{config['max_prijs']}"
+                ))
+
+            # Nieuwe woningen bepalen
             nieuw_pararius = check_nieuw(pararius_woningen, bestaande)
             nieuw_huurwoningen = check_nieuw(huurwoningen_woningen, bestaande)
 
             alle_nieuw = nieuw_pararius + nieuw_huurwoningen
 
-            # ? Alleen sturen als er echt nieuwe zijn
+            # Alleen sturen als er echt nieuwe zijn
             if alle_nieuw:
                 for w in alle_nieuw:
                     bericht = (
-                        f"? Nieuwe woning ({w['bron']})!\n"
+                        f"🏠 Nieuwe woning ({w['bron']})!\n"
                         f"{w['titel']}\n"
                         f"{w['prijs']}\n"
                         f"{w['link']}"
                     )
-
                     asyncio.run(stuur_telegram(bericht))
 
-                # ? Pas na versturen opslaan
+                # Pas na versturen opslaan
                 bestaande += alle_nieuw
                 sla_op(bestaande)
 
-            print(f"Loop klaar ? {len(alle_nieuw)} nieuw", flush=True)
+            print(f"[main] ✅ Loop klaar — {len(alle_nieuw)} nieuw gevonden", flush=True)
 
         except Exception as e:
-            print(f"Fout in loop: {e}", flush=True)
+            print(f"[main] ❌ Fout in loop: {e}", flush=True)
+            try:
+                asyncio.run(stuur_telegram(f"❌ Huiszoekerbot fout:\n{e}"))
+            except:
+                pass
 
         time.sleep(90)

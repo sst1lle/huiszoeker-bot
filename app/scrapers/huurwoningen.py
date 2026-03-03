@@ -20,7 +20,6 @@ def scrape_huurwoningen(stad='den-haag', min_prijs=0, max_prijs=1200):
     options.add_argument("--no-zygote")
     options.add_argument("--disable-software-rasterizer")
 
-    # ? BELANGRIJK: expliciet driver pad opgeven
     service = Service("/usr/bin/chromedriver")
 
     driver = webdriver.Chrome(
@@ -50,11 +49,16 @@ def scrape_huurwoningen(stad='den-haag', min_prijs=0, max_prijs=1200):
             except:
                 continue
 
+        if len(woningen) == 0:
+            print(f"[huurwoningen] ⚠️ 0 woningen gevonden! Mogelijk geblokkeerd of HTML-structuur gewijzigd.", flush=True)
+            print(f"[huurwoningen] ⚠️ Gebruikte URL: {url}", flush=True)
+        else:
+            print(f"[huurwoningen] ✅ {len(woningen)} woningen gevonden.", flush=True)
+
     except Exception as e:
-        print(f"[huurwoningen selenium] fout: {e}")
+        print(f"[huurwoningen] ❌ Fout: {e}", flush=True)
 
     finally:
         driver.quit()
 
-    print(f"[huurwoningen selenium] {len(woningen)} woningen gevonden.")
     return woningen
