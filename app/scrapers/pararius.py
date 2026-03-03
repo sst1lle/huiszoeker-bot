@@ -1,60 +1,73 @@
-import requests
-from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+import time
 
 BASE_URL = "https://www.pararius.nl"
 
 def scrape_pararius(stad='den-haag', min_prijs=0, max_prijs=1200):
-    SITE_URL = f"https://www.pararius.nl/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
+    url = f"https://www.pararius.nl/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    }
+    options = Options()
+    options.binary_location = "/usr/bin/chromium"
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--single-process")
+    options.add_argument("--no-zygote")
+    options.add_argument("--disable-software-rasterizer")
+    # Voorkom detectie als bot
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
 
-    try:
-        r = requests.get(SITE_URL, headers=headers, timeout=15)
-    except Exception as e:
-        print(f"[pararius] ❌ Verbindingsfout: {e}", flush=True)
-        return []
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
 
-    if r.status_code != 200:
-        print(f"[pararius] ⚠️ HTTP status {r.status_code} voor URL: {SITE_URL}", flush=True)
-        return []
-
-    soup = BeautifulSoup(r.text, 'html.parser')
+    # Verberg dat het Selenium is
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    })
 
     woningen = []
 
-    for item in soup.select('li.search-list__item--listing'):
-        titel_el = item.select_one('.listing-search-item__title')
-        prijs_el = item.select_one('.listing-search-item__price')
-        link_el  = item.select_one('a.listing-search-item__link--title')
+    try:
+        print(f"[pararius] Ophalen: {url}", flush=True)
+        driver.get(url)
+        time.sleep(5)
 
-        if not titel_el or not prijs_el or not link_el:
-            continue
+        page_source_snippet = driver.page_source[:500]
+        print(f"[pararius] HTML snippet: {page_source_snippet}", flush=True)
 
-        titel = titel_el.text.strip()
-        prijs = prijs_el.text.strip()
-        link  = BASE_URL + link_el['href']
+        items = driver.find_elements(By.CSS_SELECTOR, "li.search-list__item--listing")
 
-        woningen.append({
-            'titel': titel,
-            'prijs': prijs,
-            'link': link,
-            'bron': 'pararius.nl'
-        })
+        for item in items:
+            try:
+                titel_el = item.find_element(By.CSS_SELECTOR, ".listing-search-item__title")
+                prijs_el = item.find_element(By.CSS_SELECTOR, ".listing-search-item__price")
+                link_el  = item.find_element(By.CSS_SELECTOR, "a.listing-search-item__link--title")
 
-    if len(woningen) == 0:
-        print(f"[pararius] ⚠️ 0 woningen gevonden! Mogelijk geblokkeerd of HTML-structuur gewijzigd.", flush=True)
-        print(f"[pararius] ⚠️ Gebruikte URL: {SITE_URL}", flush=True)
-        print(f"[pararius] ⚠️ HTTP status: {r.status_code}", flush=True)
-        # Dump een stukje HTML om te debuggen
-        print(f"[pararius] ⚠️ HTML snippet (eerste 500 chars): {r.text[:500]}", flush=True)
-    else:
-        print(f"[pararius] ✅ {len(woningen)} woningen gevonden", flush=True)
+                woningen.append({
+                    'titel': titel_el.text.strip(),
+                    'prijs': prijs_el.text.strip(),
+                    'link': link_el.get_attribute("href"),
+                    'bron': 'pararius.nl'
+                })
+            except:
+                continue
+
+        if len(woningen) == 0:
+            print(f"[pararius] ⚠️ 0 woningen gevonden! Mogelijk geblokkeerd of HTML-structuur gewijzigd.", flush=True)
+        else:
+            print(f"[pararius] ✅ {len(woningen)} woningen gevonden", flush=True)
+
+    except Exception as e:
+        print(f"[pararius] ❌ Fout: {e}", flush=True)
+
+    finally:
+        driver.quit()
 
     return woningen
