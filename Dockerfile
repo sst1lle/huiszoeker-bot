@@ -3,17 +3,8 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
-    fonts-liberation \
-    libasound2 \
-    libnss3 \
-    libxss1 \
-    libgtk-3-0 \
-    xdg-utils \
-    wget \
     curl \
-    unzip \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app/requirements.txt .
