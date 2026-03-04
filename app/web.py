@@ -247,7 +247,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
         <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite;"></span>
         <span id="status-text">actief</span>
       </div>
-      <button class="btn-primary" id="open-modal-btn">+ Gebruiker toevoegen</button>
+      <button class="btn-primary" onclick="openModal()">+ Gebruiker toevoegen</button>
     </div>
   </div>
 </header>
@@ -336,6 +336,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
+
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
