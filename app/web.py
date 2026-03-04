@@ -71,9 +71,10 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Huiszoeker</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
+</style>
 <style>
   :root {
     --ink: #1a1a2e;
@@ -246,7 +247,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
         <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite;"></span>
         <span id="status-text">actief</span>
       </div>
-      <button class="btn-primary" onclick="openModal()">+ Gebruiker toevoegen</button>
+      <button class="btn-primary" id="open-modal-btn">+ Gebruiker toevoegen</button>
     </div>
   </div>
 </header>
@@ -337,6 +338,13 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('open-modal-btn').addEventListener('click', function() {
+    openModal();
+  });
+  loadUsers();
+});
+
 let editingUid = null;
 
 async function loadUsers() {
@@ -467,7 +475,6 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
 });
 
-loadUsers();
 </script>
 </body>
 </html>
