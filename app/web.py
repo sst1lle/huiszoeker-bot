@@ -73,9 +73,6 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 <title>Huiszoeker</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
-</style>
-<style>
   :root {
     --ink: #1a1a2e;
     --paper: #f5f0e8;
@@ -89,13 +86,13 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
   body {
     background: var(--paper);
     color: var(--ink);
-    font-family: 'DM Sans', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     min-height: 100vh;
     background-image:
       radial-gradient(ellipse at 20% 0%, rgba(200,75,49,0.06) 0%, transparent 50%),
       radial-gradient(ellipse at 80% 100%, rgba(232,168,124,0.08) 0%, transparent 50%);
   }
-  .serif { font-family: 'DM Serif Display', serif; }
+  .serif { font-family: Georgia, 'Times New Roman', serif; }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -108,7 +105,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
-    font-family: 'DM Sans', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 500;
     font-size: 14px;
     cursor: pointer;
@@ -122,7 +119,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 8px 16px;
-    font-family: 'DM Sans', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -145,7 +142,7 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
-    font-family: 'DM Sans', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 14px;
     color: var(--ink);
     outline: none;
