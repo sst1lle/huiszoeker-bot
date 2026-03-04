@@ -1,33 +1,39 @@
-import os
 import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.pararius.nl"
+FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 def scrape_pararius(stad='den-haag', min_prijs=0, max_prijs=1200):
     target_url = f"https://www.pararius.nl/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
-    api_key = os.getenv('SCRAPEDO_KEY')
-
-    url = f"https://api.scrape.do?token={api_key}&url={target_url}"
 
     try:
-        print(f"[pararius] Ophalen via Scrape.do: {target_url}", flush=True)
-        r = requests.get(url, timeout=60)
-        print(f"[pararius] HTTP status: {r.status_code}", flush=True)
+        print(f"[pararius] Ophalen via FlareSolverr: {target_url}", flush=True)
+        r = requests.post(FLARESOLVERR_URL, json={
+            "cmd": "request.get",
+            "url": target_url,
+            "maxTimeout": 60000
+        }, timeout=70)
+
+        data = r.json()
+        status = data.get("status")
+        print(f"[pararius] FlareSolverr status: {status}", flush=True)
+
+        if status != "ok":
+            print(f"[pararius] ⚠️ FlareSolverr fout: {data.get('message')}", flush=True)
+            return []
+
+        html = data["solution"]["response"]
+
     except Exception as e:
         print(f"[pararius] ❌ Verbindingsfout: {e}", flush=True)
         return []
 
-    if r.status_code != 200:
-        print(f"[pararius] ⚠️ HTTP {r.status_code}", flush=True)
-        print(f"[pararius] HTML snippet: {r.text[:800]}", flush=True)
-        return []
-
-    if "Just a moment" in r.text:
+    if "Just a moment" in html:
         print(f"[pararius] ⚠️ Cloudflare challenge nog actief!", flush=True)
         return []
 
-    soup = BeautifulSoup(r.text, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
     woningen = []
 
     for item in soup.select('li.search-list__item--listing'):
@@ -47,7 +53,7 @@ def scrape_pararius(stad='den-haag', min_prijs=0, max_prijs=1200):
 
     if len(woningen) == 0:
         print(f"[pararius] ⚠️ 0 woningen gevonden!", flush=True)
-        print(f"[pararius] HTML snippet: {r.text[:800]}", flush=True)
+        print(f"[pararius] HTML snippet: {html[:800]}", flush=True)
     else:
         print(f"[pararius] ✅ {len(woningen)} woningen gevonden", flush=True)
 

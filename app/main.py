@@ -83,7 +83,6 @@ if __name__ == '__main__':
             if len(pararius_woningen) == 0:
                 asyncio.run(stuur_telegram(
                     "⚠️ Waarschuwing: Pararius gaf 0 resultaten!\n"
-                    "Mogelijk geblokkeerd of Scrape.do probleem.\n"
                     f"Stad: {config['stad']}, Prijs: €{config['min_prijs']}-€{config['max_prijs']}"
                 ))
 
