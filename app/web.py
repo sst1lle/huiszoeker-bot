@@ -303,8 +303,8 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
       </div>
 
       <div>
-        <label>Telegram username</label>
-        <input type="text" id="form-telegram" placeholder="@jouwusername">
+        <label>Telegram chat_id</label>
+        <input type="text" id="form-telegram" placeholder="bijv. 1497723745">
       </div>
 
       <hr class="divider" style="margin: 4px 0;">
@@ -383,7 +383,7 @@ function renderUsers(users) {
           </div>
           <div>
             <div style="font-weight:600;font-size:15px;">${u.naam || 'Naamloos'}</div>
-            <div style="font-size:13px;color:var(--muted);">${u.telegram_username || 'geen telegram'}</div>
+            <div style="font-size:13px;color:var(--muted);">chat_id: ${u.telegram_username || 'niet ingesteld'}</div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">

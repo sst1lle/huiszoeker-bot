@@ -75,17 +75,8 @@ async def stuur_telegram_user(user, bericht):
         print(f"[telegram] Geen username voor {user.get('naam')}", flush=True)
         return
 
-    # Zorg dat het met @ begint
-    if not telegram.startswith('@'):
-        telegram = '@' + telegram
-
-    # Probeer ook via TELEGRAM_CHAT_ID env als fallback
-    chat_ids_env = os.getenv('TELEGRAM_CHAT_ID', '').split(',')
-
-    # Stuur naar alle chat_ids uit .env (legacy) + de user zelf
-    targets = [c.strip() for c in chat_ids_env if c.strip()]
-    if telegram not in targets:
-        targets.append(telegram)
+    # telegram is een chat_id (getal), geen username
+    targets = [telegram]
 
     for chat_id in targets:
         try:
