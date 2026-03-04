@@ -2,7 +2,7 @@ from flask import Flask, request, redirect, jsonify
 import json, os, uuid
 
 app = Flask(__name__)
-USERS_DIR = '/app/data/users'
+USERS_DIR = os.environ.get('USERS_DIR', './data/users')
 os.makedirs(USERS_DIR, exist_ok=True)
 
 def laad_users():
