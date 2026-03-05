@@ -27,4 +27,4 @@ services:
       - '5000:5000'
     volumes:
       - ./data:/app/data
-    command: python web.py
+    command: gunicorn -w 4 -b 0.0.0.0:5000 web:app
