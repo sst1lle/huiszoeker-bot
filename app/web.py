@@ -255,7 +255,7 @@ body {
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         Gebruiker
       </button>
-      <button class="theme-btn" id="help-btn" title="Hoe werkt het?">?</button>
+
     </div>
   </div>
 </header>
@@ -283,7 +283,10 @@ body {
 <div class="overlay" id="overlay">
   <div class="modal">
     <div class="modal-header">
-      <h2 class="modal-title" id="modal-title">Gebruiker toevoegen</h2>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <h2 class="modal-title" id="modal-title">Gebruiker toevoegen</h2>
+        <button class="theme-btn" id="help-btn" title="Hoe werkt het?" style="width:22px;height:22px;font-size:12px;border-radius:50%;flex-shrink:0;">?</button>
+      </div>
       <button class="close-btn" id="close-btn">✕</button>
     </div>
     <div class="form-group">
@@ -505,7 +508,7 @@ const steps = [
     title: 'Bot zoeken in Telegram',
     body: `
       <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
-      <span class="step-code">@jouw_bot_naam</span>
+      <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
       <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
@@ -515,11 +518,14 @@ const steps = [
     icon: '🔑',
     title: 'Jouw chat_id ophalen',
     body: `
-      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
-      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
-      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
-      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
-      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+      <p>Zoek in Telegram naar de bot <strong>@userinfobot</strong> en stuur <strong>/start</strong>.</p>
+      <span class="step-code">@userinfobot</span>
+      <p>De bot stuurt je meteen je eigen info terug, zo:</p>
+      <div style="background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin:10px 0;font-size:13px;line-height:1.8;">
+        Id: <strong style="color:var(--accent)">123456789</strong><br>
+        @jouwusername
+      </div>
+      <p>Kopieer het getal achter <strong>Id:</strong> — dat is jouw chat_id.</p>
     `
   },
   {
@@ -640,7 +646,7 @@ const steps = [
     title: 'Bot zoeken in Telegram',
     body: `
       <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
-      <span class="step-code">@jouw_bot_naam</span>
+      <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
       <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
@@ -650,11 +656,14 @@ const steps = [
     icon: '🔑',
     title: 'Jouw chat_id ophalen',
     body: `
-      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
-      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
-      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
-      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
-      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+      <p>Zoek in Telegram naar de bot <strong>@userinfobot</strong> en stuur <strong>/start</strong>.</p>
+      <span class="step-code">@userinfobot</span>
+      <p>De bot stuurt je meteen je eigen info terug, zo:</p>
+      <div style="background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin:10px 0;font-size:13px;line-height:1.8;">
+        Id: <strong style="color:var(--accent)">123456789</strong><br>
+        @jouwusername
+      </div>
+      <p>Kopieer het getal achter <strong>Id:</strong> — dat is jouw chat_id.</p>
     `
   },
   {
@@ -805,7 +814,7 @@ const steps = [
     title: 'Bot zoeken in Telegram',
     body: `
       <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
-      <span class="step-code">@jouw_bot_naam</span>
+      <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
       <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
@@ -815,11 +824,14 @@ const steps = [
     icon: '🔑',
     title: 'Jouw chat_id ophalen',
     body: `
-      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
-      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
-      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
-      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
-      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+      <p>Zoek in Telegram naar de bot <strong>@userinfobot</strong> en stuur <strong>/start</strong>.</p>
+      <span class="step-code">@userinfobot</span>
+      <p>De bot stuurt je meteen je eigen info terug, zo:</p>
+      <div style="background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin:10px 0;font-size:13px;line-height:1.8;">
+        @jouwusername<br>
+        Id: <strong style="color:var(--accent)">123456789</strong>
+      </div>
+      <p>Kopieer het getal achter <strong>Id:</strong> — dat is jouw chat_id.</p>
     `
   },
   {
