@@ -222,6 +222,15 @@ body {
 .divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 .form-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 
+.step-dot { height: 4px; flex: 1; border-radius: 2px; background: var(--border-2); transition: background 0.2s; }
+.step-dot.active { background: var(--accent); }
+.step-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--accent-s); border: 1px solid rgba(232,99,42,0.2); display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 14px; }
+.step-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 8px; }
+.step-body { font-size: 13px; color: var(--text-2); line-height: 1.7; }
+.step-body strong { color: var(--text); }
+.step-code { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; font-family: monospace; font-size: 13px; color: var(--accent); margin: 8px 0; display: block; }
+.step-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.step-link:hover { text-decoration: underline; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--text); color: var(--bg); font-size: 13px; font-weight: 500; padding: 10px 16px; border-radius: var(--radius); box-shadow: var(--shadow-lg); z-index: 300; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s; opacity: 0; white-space: nowrap; }
 .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 </style>
@@ -246,6 +255,7 @@ body {
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         Gebruiker
       </button>
+      <button class="theme-btn" id="help-btn" title="Hoe werkt het?">?</button>
     </div>
   </div>
 </header>
@@ -328,6 +338,46 @@ body {
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- CONFIRM TELEGRAM MODAL -->
+<div class="overlay" id="confirm-overlay">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h2 class="modal-title">Telegram ingesteld?</h2>
+      <button class="close-btn" id="confirm-close">✕</button>
+    </div>
+    <p style="font-size:14px;color:var(--text-2);line-height:1.6;margin-bottom:20px;">Heb je je Telegram bot al opgezet en je chat_id ingevuld? Zonder dit ontvang je geen meldingen.</p>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-ghost" style="flex:1;justify-content:center" id="confirm-no">Nee, laat me zien hoe</button>
+      <button class="btn btn-primary" style="flex:1;justify-content:center" id="confirm-yes">Ja, opslaan!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ONBOARDING MODAL -->
+<div class="overlay" id="onboarding-overlay">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h2 class="modal-title" id="onboarding-title">Stap 1 van 3</h2>
+      <button class="close-btn" id="onboarding-close">✕</button>
+    </div>
+
+    <!-- Progress bar -->
+    <div style="display:flex;gap:6px;margin-bottom:24px;">
+      <div class="step-dot active" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+      <div class="step-dot" id="dot-3"></div>
+    </div>
+
+    <!-- Step content -->
+    <div id="onboarding-content"></div>
+
+    <div style="display:flex;justify-content:space-between;margin-top:24px;padding-top:16px;border-top:1px solid var(--border);">
+      <button class="btn btn-ghost" id="onboarding-back">Terug</button>
+      <button class="btn btn-primary" id="onboarding-next">Volgende →</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // Theme
@@ -428,26 +478,7 @@ function openModal(uid, u) {
 function editUser(uid, u) { openModal(uid, u); }
 function closeModal() { document.getElementById('overlay').classList.remove('open'); editUid = null; }
 
-async function saveUser() {
-  const naam = document.getElementById('f-naam').value.trim();
-  const telegram = document.getElementById('f-telegram').value.trim();
-  if (!naam) { toast('Vul een naam in'); return; }
-  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
-  const data = {
-    naam, telegram_chat_id: telegram,
-    stad: document.getElementById('f-stad').value.trim() || 'den-haag',
-    min_prijs: parseInt(document.getElementById('f-min').value) || 0,
-    max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
-  };
-  if (editUid) {
-    await api('PUT', `/api/users/${editUid}`, data);
-    toast('✓ Opgeslagen');
-  } else {
-    await api('POST', '/api/users', data);
-    toast('✓ Gebruiker toegevoegd');
-  }
-  closeModal(); loadUsers();
-}
+// saveUser moved to doSaveUser below
 
 async function deleteUser(uid, naam) {
   if (!confirm(`${naam} verwijderen?`)) return;
@@ -466,10 +497,133 @@ async function doLogin() {
   if (res.ok) {
     isAdmin = true;
     closeLogin();
-    document.getElementById('admin-badge').style.display = 'inline-flex';
-    document.getElementById('admin-btn').textContent = 'Uitloggen';
     toast('✓ Ingelogd als admin');
-    loadUsers();
+    // Onboarding steps content
+const steps = [
+  {
+    icon: '🤖',
+    title: 'Bot zoeken in Telegram',
+    body: `
+      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <span class="step-code">@jouw_bot_naam</span>
+      <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
+      <span class="step-code">/start</span>
+      <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
+    `
+  },
+  {
+    icon: '🔑',
+    title: 'Jouw chat_id ophalen',
+    body: `
+      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
+      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
+      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
+      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
+      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+    `
+  },
+  {
+    icon: '📝',
+    title: 'Formulier invullen',
+    body: `
+      <p>Klik op <strong>+ Gebruiker</strong> en vul het formulier in:</p>
+      <ul style="margin:10px 0 10px 16px;display:flex;flex-direction:column;gap:6px">
+        <li><strong>Naam</strong> — jouw naam of bijnaam</li>
+        <li><strong>Telegram chat_id</strong> — het getal uit stap 2</li>
+        <li><strong>Stad</strong> — bijv. <code style="background:var(--bg-3);padding:1px 5px;border-radius:3px">den-haag</code></li>
+        <li><strong>Min/max prijs</strong> — jouw prijsrange</li>
+      </ul>
+      <p>Druk op <strong>Opslaan</strong> — de bot stuurt je meteen een melding zodra er een nieuwe woning verschijnt!</p>
+    `
+  }
+];
+
+let currentStep = 0;
+let pendingSave = false;
+
+function renderStep(n) {
+  const step = steps[n];
+  document.getElementById('onboarding-title').textContent = `Stap ${n+1} van 3`;
+  document.getElementById('onboarding-content').innerHTML = `
+    <div class="step-icon">${step.icon}</div>
+    <div class="step-title">${step.title}</div>
+    <div class="step-body">${step.body}</div>
+  `;
+  [0,1,2].forEach(i => {
+    document.getElementById('dot-'+(i+1)).className = 'step-dot' + (i === n ? ' active' : '');
+  });
+  document.getElementById('onboarding-back').style.visibility = n === 0 ? 'hidden' : 'visible';
+  document.getElementById('onboarding-next').textContent = n === 2 ? (pendingSave ? 'Klaar, opslaan!' : 'Klaar!') : 'Volgende →';
+}
+
+function openOnboarding(fromSave = false) {
+  pendingSave = fromSave;
+  currentStep = 0;
+  renderStep(0);
+  document.getElementById('onboarding-overlay').classList.add('open');
+  // Close confirm modal if open
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+function closeOnboarding() {
+  document.getElementById('onboarding-overlay').classList.remove('open');
+}
+
+document.getElementById('help-btn').addEventListener('click', () => openOnboarding(false));
+document.getElementById('onboarding-close').addEventListener('click', closeOnboarding);
+document.getElementById('onboarding-overlay').addEventListener('click', e => { if (e.target.id === 'onboarding-overlay') closeOnboarding(); });
+
+document.getElementById('onboarding-next').addEventListener('click', () => {
+  if (currentStep < 2) {
+    currentStep++;
+    renderStep(currentStep);
+  } else {
+    closeOnboarding();
+    if (pendingSave) doSaveUser();
+  }
+});
+
+document.getElementById('onboarding-back').addEventListener('click', () => {
+  if (currentStep > 0) { currentStep--; renderStep(currentStep); }
+});
+
+// Confirm modal
+function openConfirm() {
+  document.getElementById('confirm-overlay').classList.add('open');
+}
+function closeConfirm() {
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+document.getElementById('confirm-close').addEventListener('click', closeConfirm);
+document.getElementById('confirm-overlay').addEventListener('click', e => { if (e.target.id === 'confirm-overlay') closeConfirm(); });
+document.getElementById('confirm-yes').addEventListener('click', () => { closeConfirm(); doSaveUser(); });
+document.getElementById('confirm-no').addEventListener('click', () => openOnboarding(true));
+
+// Rename saveUser to doSaveUser (actual save logic)
+// saveUser now shows confirm first
+const doSaveUser = async function() {
+  const naam = document.getElementById('f-naam').value.trim();
+  const telegram = document.getElementById('f-telegram').value.trim();
+  if (!naam) { toast('Vul een naam in'); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
+  const data = {
+    naam, telegram_chat_id: telegram,
+    stad: document.getElementById('f-stad').value.trim() || 'den-haag',
+    min_prijs: parseInt(document.getElementById('f-min').value) || 0,
+    max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
+  };
+  if (editUid) {
+    await api('PUT', `/api/users/${editUid}`, data);
+    toast('✓ Opgeslagen');
+  } else {
+    await api('POST', '/api/users', data);
+    toast('✓ Gebruiker toegevoegd');
+  }
+  closeModal(); loadUsers();
+};
+
+checkAdmin();
   } else {
     document.getElementById('login-error').style.display = 'block';
   }
@@ -478,10 +632,133 @@ async function doLogin() {
 async function doLogout() {
   await api('POST', '/api/logout');
   isAdmin = false;
-  document.getElementById('admin-badge').style.display = 'none';
-  document.getElementById('admin-btn').textContent = 'Inloggen';
   toast('Uitgelogd');
-  loadUsers();
+  // Onboarding steps content
+const steps = [
+  {
+    icon: '🤖',
+    title: 'Bot zoeken in Telegram',
+    body: `
+      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <span class="step-code">@jouw_bot_naam</span>
+      <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
+      <span class="step-code">/start</span>
+      <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
+    `
+  },
+  {
+    icon: '🔑',
+    title: 'Jouw chat_id ophalen',
+    body: `
+      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
+      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
+      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
+      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
+      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+    `
+  },
+  {
+    icon: '📝',
+    title: 'Formulier invullen',
+    body: `
+      <p>Klik op <strong>+ Gebruiker</strong> en vul het formulier in:</p>
+      <ul style="margin:10px 0 10px 16px;display:flex;flex-direction:column;gap:6px">
+        <li><strong>Naam</strong> — jouw naam of bijnaam</li>
+        <li><strong>Telegram chat_id</strong> — het getal uit stap 2</li>
+        <li><strong>Stad</strong> — bijv. <code style="background:var(--bg-3);padding:1px 5px;border-radius:3px">den-haag</code></li>
+        <li><strong>Min/max prijs</strong> — jouw prijsrange</li>
+      </ul>
+      <p>Druk op <strong>Opslaan</strong> — de bot stuurt je meteen een melding zodra er een nieuwe woning verschijnt!</p>
+    `
+  }
+];
+
+let currentStep = 0;
+let pendingSave = false;
+
+function renderStep(n) {
+  const step = steps[n];
+  document.getElementById('onboarding-title').textContent = `Stap ${n+1} van 3`;
+  document.getElementById('onboarding-content').innerHTML = `
+    <div class="step-icon">${step.icon}</div>
+    <div class="step-title">${step.title}</div>
+    <div class="step-body">${step.body}</div>
+  `;
+  [0,1,2].forEach(i => {
+    document.getElementById('dot-'+(i+1)).className = 'step-dot' + (i === n ? ' active' : '');
+  });
+  document.getElementById('onboarding-back').style.visibility = n === 0 ? 'hidden' : 'visible';
+  document.getElementById('onboarding-next').textContent = n === 2 ? (pendingSave ? 'Klaar, opslaan!' : 'Klaar!') : 'Volgende →';
+}
+
+function openOnboarding(fromSave = false) {
+  pendingSave = fromSave;
+  currentStep = 0;
+  renderStep(0);
+  document.getElementById('onboarding-overlay').classList.add('open');
+  // Close confirm modal if open
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+function closeOnboarding() {
+  document.getElementById('onboarding-overlay').classList.remove('open');
+}
+
+document.getElementById('help-btn').addEventListener('click', () => openOnboarding(false));
+document.getElementById('onboarding-close').addEventListener('click', closeOnboarding);
+document.getElementById('onboarding-overlay').addEventListener('click', e => { if (e.target.id === 'onboarding-overlay') closeOnboarding(); });
+
+document.getElementById('onboarding-next').addEventListener('click', () => {
+  if (currentStep < 2) {
+    currentStep++;
+    renderStep(currentStep);
+  } else {
+    closeOnboarding();
+    if (pendingSave) doSaveUser();
+  }
+});
+
+document.getElementById('onboarding-back').addEventListener('click', () => {
+  if (currentStep > 0) { currentStep--; renderStep(currentStep); }
+});
+
+// Confirm modal
+function openConfirm() {
+  document.getElementById('confirm-overlay').classList.add('open');
+}
+function closeConfirm() {
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+document.getElementById('confirm-close').addEventListener('click', closeConfirm);
+document.getElementById('confirm-overlay').addEventListener('click', e => { if (e.target.id === 'confirm-overlay') closeConfirm(); });
+document.getElementById('confirm-yes').addEventListener('click', () => { closeConfirm(); doSaveUser(); });
+document.getElementById('confirm-no').addEventListener('click', () => openOnboarding(true));
+
+// Rename saveUser to doSaveUser (actual save logic)
+// saveUser now shows confirm first
+const doSaveUser = async function() {
+  const naam = document.getElementById('f-naam').value.trim();
+  const telegram = document.getElementById('f-telegram').value.trim();
+  if (!naam) { toast('Vul een naam in'); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
+  const data = {
+    naam, telegram_chat_id: telegram,
+    stad: document.getElementById('f-stad').value.trim() || 'den-haag',
+    min_prijs: parseInt(document.getElementById('f-min').value) || 0,
+    max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
+  };
+  if (editUid) {
+    await api('PUT', `/api/users/${editUid}`, data);
+    toast('✓ Opgeslagen');
+  } else {
+    await api('POST', '/api/users', data);
+    toast('✓ Gebruiker toegevoegd');
+  }
+  closeModal(); loadUsers();
+};
+
+checkAdmin();
 }
 
 // Admin knop toggle
@@ -494,7 +771,18 @@ document.getElementById('admin-btn').addEventListener('click', () => {
 document.getElementById('add-btn').addEventListener('click', () => openModal());
 document.getElementById('close-btn').addEventListener('click', closeModal);
 document.getElementById('cancel-btn').addEventListener('click', closeModal);
-document.getElementById('save-btn').addEventListener('click', saveUser);
+document.getElementById('save-btn').addEventListener('click', () => {
+  const naam = document.getElementById('f-naam').value.trim();
+  const telegram = document.getElementById('f-telegram').value.trim();
+  if (!naam) { toast('Vul een naam in'); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
+  // Only show confirm for new users, not when editing
+  if (!editUid) {
+    openConfirm();
+  } else {
+    doSaveUser();
+  }
+});
 document.getElementById('login-close').addEventListener('click', closeLogin);
 document.getElementById('login-cancel').addEventListener('click', closeLogin);
 document.getElementById('login-submit').addEventListener('click', doLogin);
@@ -505,10 +793,135 @@ document.getElementById('login-overlay').addEventListener('click', e => { if (e.
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { closeModal(); closeLogin(); }
   if (e.key === 'Enter') {
-    if (document.getElementById('overlay').classList.contains('open')) saveUser();
+    if (document.getElementById('overlay').classList.contains('open')) { if (!editUid) openConfirm(); else doSaveUser(); }
     if (document.getElementById('login-overlay').classList.contains('open')) doLogin();
   }
 });
+
+// Onboarding steps content
+const steps = [
+  {
+    icon: '🤖',
+    title: 'Bot zoeken in Telegram',
+    body: `
+      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <span class="step-code">@jouw_bot_naam</span>
+      <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
+      <span class="step-code">/start</span>
+      <p>De bot bevestigt nu dat hij je herkent. Zonder dit kan hij je geen berichten sturen!</p>
+    `
+  },
+  {
+    icon: '🔑',
+    title: 'Jouw chat_id ophalen',
+    body: `
+      <p>Open de volgende link in je browser (vervang TOKEN door jouw bot token uit de .env):</p>
+      <span class="step-code">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span>
+      <p>Je ziet een JSON response. Zoek naar <strong>"id"</strong> onder <strong>"chat"</strong>:</p>
+      <span class="step-code">{"chat": {"id": 1497723745, ...}}</span>
+      <p>Dat getal is jouw <strong>chat_id</strong>. Kopieer het.</p>
+    `
+  },
+  {
+    icon: '📝',
+    title: 'Formulier invullen',
+    body: `
+      <p>Klik op <strong>+ Gebruiker</strong> en vul het formulier in:</p>
+      <ul style="margin:10px 0 10px 16px;display:flex;flex-direction:column;gap:6px">
+        <li><strong>Naam</strong> — jouw naam of bijnaam</li>
+        <li><strong>Telegram chat_id</strong> — het getal uit stap 2</li>
+        <li><strong>Stad</strong> — bijv. <code style="background:var(--bg-3);padding:1px 5px;border-radius:3px">den-haag</code></li>
+        <li><strong>Min/max prijs</strong> — jouw prijsrange</li>
+      </ul>
+      <p>Druk op <strong>Opslaan</strong> — de bot stuurt je meteen een melding zodra er een nieuwe woning verschijnt!</p>
+    `
+  }
+];
+
+let currentStep = 0;
+let pendingSave = false;
+
+function renderStep(n) {
+  const step = steps[n];
+  document.getElementById('onboarding-title').textContent = `Stap ${n+1} van 3`;
+  document.getElementById('onboarding-content').innerHTML = `
+    <div class="step-icon">${step.icon}</div>
+    <div class="step-title">${step.title}</div>
+    <div class="step-body">${step.body}</div>
+  `;
+  [0,1,2].forEach(i => {
+    document.getElementById('dot-'+(i+1)).className = 'step-dot' + (i === n ? ' active' : '');
+  });
+  document.getElementById('onboarding-back').style.visibility = n === 0 ? 'hidden' : 'visible';
+  document.getElementById('onboarding-next').textContent = n === 2 ? (pendingSave ? 'Klaar, opslaan!' : 'Klaar!') : 'Volgende →';
+}
+
+function openOnboarding(fromSave = false) {
+  pendingSave = fromSave;
+  currentStep = 0;
+  renderStep(0);
+  document.getElementById('onboarding-overlay').classList.add('open');
+  // Close confirm modal if open
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+function closeOnboarding() {
+  document.getElementById('onboarding-overlay').classList.remove('open');
+}
+
+document.getElementById('help-btn').addEventListener('click', () => openOnboarding(false));
+document.getElementById('onboarding-close').addEventListener('click', closeOnboarding);
+document.getElementById('onboarding-overlay').addEventListener('click', e => { if (e.target.id === 'onboarding-overlay') closeOnboarding(); });
+
+document.getElementById('onboarding-next').addEventListener('click', () => {
+  if (currentStep < 2) {
+    currentStep++;
+    renderStep(currentStep);
+  } else {
+    closeOnboarding();
+    if (pendingSave) doSaveUser();
+  }
+});
+
+document.getElementById('onboarding-back').addEventListener('click', () => {
+  if (currentStep > 0) { currentStep--; renderStep(currentStep); }
+});
+
+// Confirm modal
+function openConfirm() {
+  document.getElementById('confirm-overlay').classList.add('open');
+}
+function closeConfirm() {
+  document.getElementById('confirm-overlay').classList.remove('open');
+}
+
+document.getElementById('confirm-close').addEventListener('click', closeConfirm);
+document.getElementById('confirm-overlay').addEventListener('click', e => { if (e.target.id === 'confirm-overlay') closeConfirm(); });
+document.getElementById('confirm-yes').addEventListener('click', () => { closeConfirm(); doSaveUser(); });
+document.getElementById('confirm-no').addEventListener('click', () => openOnboarding(true));
+
+// Rename saveUser to doSaveUser (actual save logic)
+// saveUser now shows confirm first
+const doSaveUser = async function() {
+  const naam = document.getElementById('f-naam').value.trim();
+  const telegram = document.getElementById('f-telegram').value.trim();
+  if (!naam) { toast('Vul een naam in'); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
+  const data = {
+    naam, telegram_chat_id: telegram,
+    stad: document.getElementById('f-stad').value.trim() || 'den-haag',
+    min_prijs: parseInt(document.getElementById('f-min').value) || 0,
+    max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
+  };
+  if (editUid) {
+    await api('PUT', `/api/users/${editUid}`, data);
+    toast('✓ Opgeslagen');
+  } else {
+    await api('POST', '/api/users', data);
+    toast('✓ Gebruiker toegevoegd');
+  }
+  closeModal(); loadUsers();
+};
 
 checkAdmin();
 </script>
