@@ -7,13 +7,13 @@ from telegram import Bot
 
 from scrapers.pararius import scrape_pararius
 
-DATA_FILE = '/app/data/woningen.json'
 USERS_DIR = '/app/data/users'
+SEEN_DIR = '/app/data/seen'
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 load_dotenv()
 
-INTERVAL = 15 * 60  # 15 minuten
+INTERVAL = 15 * 60
 
 
 def laad_users():
@@ -27,66 +27,43 @@ def laad_users():
     return users
 
 
-def laad_bestaande():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE) as f:
-            return json.load(f)
-    return []
+def laad_gezien(uid):
+    """Laad de links die al naar deze specifieke user gestuurd zijn."""
+    os.makedirs(SEEN_DIR, exist_ok=True)
+    path = os.path.join(SEEN_DIR, f'{uid}.json')
+    if os.path.exists(path):
+        with open(path) as f:
+            return set(json.load(f))
+    return set()
 
 
-def sla_op(woningen):
-    os.makedirs('/app/data', exist_ok=True)
-    with open(DATA_FILE, 'w') as f:
-        json.dump(woningen, f, indent=2, ensure_ascii=False)
+def sla_gezien_op(uid, gezien):
+    """Sla de geziene links op voor deze specifieke user."""
+    os.makedirs(SEEN_DIR, exist_ok=True)
+    path = os.path.join(SEEN_DIR, f'{uid}.json')
+    with open(path, 'w') as f:
+        json.dump(list(gezien), f)
 
 
-def check_nieuw(nieuwe_woningen, bestaande_woningen):
-    bestaande_links = {w['link'].rstrip('/') for w in bestaande_woningen}
-    unieke = []
-    for w in nieuwe_woningen:
+def check_nieuw_voor_user(woningen, gezien):
+    nieuw = []
+    for w in woningen:
         link = w['link'].rstrip('/')
-        if link not in bestaande_links:
-            unieke.append(w)
-            bestaande_links.add(link)
-    return unieke
+        if link not in gezien:
+            nieuw.append(w)
+            gezien.add(link)
+    return nieuw, gezien
 
 
-def woning_past_bij_user(woning, user):
-    """Check of een woning past binnen de prijsrange van een user."""
-    try:
-        # Haal getal uit prijs string, bijv "€ 950 per maand" -> 950
-        prijs_str = woning.get('prijs', '')
-        cijfers = ''.join(filter(str.isdigit, prijs_str.replace('.', '')))
-        if not cijfers:
-            return True  # Bij twijfel toch sturen
-        prijs = int(cijfers)
-        return user['min_prijs'] <= prijs <= user['max_prijs']
-    except:
-        return True
-
-
-async def stuur_telegram_user(user, bericht):
-    """Stuur bericht naar een specifieke user via Telegram username."""
+async def stuur_telegram(chat_id, bericht):
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
-
-    # Telegram chat_id kan ook als username via @username
-    telegram = user.get('telegram_username', '').strip()
-    if not telegram:
-        print(f"[telegram] Geen username voor {user.get('naam')}", flush=True)
-        return
-
-    # telegram is een chat_id (getal), geen username
-    targets = [telegram]
-
-    for chat_id in targets:
-        try:
-            await bot.send_message(chat_id=chat_id, text=bericht)
-        except Exception as e:
-            print(f"[telegram] Fout voor {chat_id}: {e}", flush=True)
+    try:
+        await bot.send_message(chat_id=chat_id, text=bericht)
+    except Exception as e:
+        print(f"[telegram] Fout voor {chat_id}: {e}", flush=True)
 
 
 async def stuur_warning(bericht):
-    """Stuur waarschuwing naar alle chat_ids in .env."""
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     chat_ids = os.getenv('TELEGRAM_CHAT_ID', '').split(',')
     for chat_id in chat_ids:
@@ -96,7 +73,7 @@ async def stuur_warning(bericht):
         try:
             await bot.send_message(chat_id=chat_id, text=bericht)
         except Exception as e:
-            print(f"[telegram] Warning fout voor {chat_id}: {e}", flush=True)
+            print(f"[telegram] Warning fout: {e}", flush=True)
 
 
 if __name__ == '__main__':
@@ -105,7 +82,6 @@ if __name__ == '__main__':
     while True:
         try:
             users = laad_users()
-            bestaande = laad_bestaande()
 
             if not users:
                 print("[main] Geen gebruikers gevonden, wacht...", flush=True)
@@ -114,20 +90,22 @@ if __name__ == '__main__':
 
             print(f"[main] {len(users)} gebruiker(s) actief", flush=True)
 
-            # Verzamel unieke combinaties van stad+prijs om dubbele scrapes te vermijden
-            scraped = {}  # key: "stad-min-max" -> lijst woningen
-
-            alle_nieuw_globaal = []
+            # Cache scrape resultaten per stad+prijs combinatie
+            scraped = {}
 
             for uid, user in users.items():
+                naam = user.get('naam', uid)
                 stad = user.get('stad', 'den-haag')
                 min_prijs = user.get('min_prijs', 0)
                 max_prijs = user.get('max_prijs', 1500)
-                naam = user.get('naam', uid)
+                chat_id = user.get('telegram_chat_id', '').strip()
 
+                if not chat_id:
+                    print(f"[main] {naam}: geen chat_id ingesteld, sla over", flush=True)
+                    continue
+
+                # Scrape alleen als deze combinatie nog niet gedaan is
                 scrape_key = f"{stad}-{min_prijs}-{max_prijs}"
-
-                # Alleen scrapen als deze combinatie nog niet gedaan is
                 if scrape_key not in scraped:
                     woningen = scrape_pararius(stad=stad, min_prijs=min_prijs, max_prijs=max_prijs)
                     scraped[scrape_key] = woningen
@@ -140,16 +118,14 @@ if __name__ == '__main__':
                         ))
                 else:
                     woningen = scraped[scrape_key]
-                    print(f"[main] {naam}: hergebruik scrape voor {stad} ({len(woningen)} woningen)", flush=True)
+                    print(f"[main] {naam}: hergebruik scrape ({len(woningen)} woningen)", flush=True)
 
-                # Check nieuwe woningen voor deze user
-                nieuw = check_nieuw(woningen, bestaande)
+                # Check welke woningen nieuw zijn voor DEZE specifieke user
+                gezien = laad_gezien(uid)
+                nieuw, gezien_updated = check_nieuw_voor_user(woningen, gezien)
 
-                # Filter op prijs van deze specifieke user
-                nieuw_voor_user = [w for w in nieuw if woning_past_bij_user(w, user)]
-
-                if nieuw_voor_user:
-                    for w in nieuw_voor_user:
+                if nieuw:
+                    for w in nieuw:
                         bericht = (
                             f"🏠 Nieuwe woning voor {naam}!\n"
                             f"{w['titel']}\n"
@@ -157,17 +133,15 @@ if __name__ == '__main__':
                             f"📍 {stad}\n"
                             f"{w['link']}"
                         )
-                        asyncio.run(stuur_telegram_user(user, bericht))
+                        asyncio.run(stuur_telegram(chat_id, bericht))
 
-                    alle_nieuw_globaal += nieuw_voor_user
+                    # Sla geziene links op voor deze user
+                    sla_gezien_op(uid, gezien_updated)
+                    print(f"[main] {naam}: {len(nieuw)} nieuw verstuurd", flush=True)
+                else:
+                    print(f"[main] {naam}: geen nieuwe woningen", flush=True)
 
-            # Sla alle nieuwe woningen op (over alle users heen)
-            if alle_nieuw_globaal:
-                bestaande += alle_nieuw_globaal
-                sla_op(bestaande)
-
-            print(f"[main] ✅ Loop klaar — {len(alle_nieuw_globaal)} nieuw gevonden", flush=True)
-            print(f"[main] Volgende check over 15 minuten...", flush=True)
+            print(f"[main] ✅ Loop klaar, volgende check over 15 minuten...", flush=True)
 
         except Exception as e:
             print(f"[main] ❌ Fout in loop: {e}", flush=True)
