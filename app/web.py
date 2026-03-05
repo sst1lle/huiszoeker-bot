@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, jsonify
+from flask import Flask, request, jsonify
 import json, os, uuid
 
 app = Flask(__name__)
@@ -39,7 +39,7 @@ def add_user():
     uid = str(uuid.uuid4())[:8]
     user = {
         'naam': data.get('naam', ''),
-        'telegram_username': data.get('telegram_username', ''),
+        'telegram_chat_id': data.get('telegram_chat_id', ''),
         'stad': data.get('stad', 'den-haag'),
         'min_prijs': int(data.get('min_prijs', 0)),
         'max_prijs': int(data.get('max_prijs', 1500)),
@@ -52,7 +52,7 @@ def update_user(uid):
     data = request.json
     user = {
         'naam': data.get('naam', ''),
-        'telegram_username': data.get('telegram_username', ''),
+        'telegram_chat_id': data.get('telegram_chat_id', ''),
         'stad': data.get('stad', 'den-haag'),
         'min_prijs': int(data.get('min_prijs', 0)),
         'max_prijs': int(data.get('max_prijs', 1500)),
@@ -65,418 +65,386 @@ def delete_user(uid):
     verwijder_user(uid)
     return jsonify({'ok': True})
 
-HTML_TEMPLATE = r'''<!DOCTYPE html>
-<html lang="nl">
+HTML_TEMPLATE = '''<!DOCTYPE html>
+<html lang="nl" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Huiszoeker</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<title>Huursignal</title>
 <style>
-  :root {
-    --ink: #1a1a2e;
-    --paper: #f5f0e8;
-    --accent: #c84b31;
-    --accent2: #e8a87c;
-    --muted: #8a8070;
-    --card: #faf7f2;
-    --border: #e0d8cc;
-  }
-  * { box-sizing: border-box; }
-  body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    min-height: 100vh;
-    background-image:
-      radial-gradient(ellipse at 20% 0%, rgba(200,75,49,0.06) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 100%, rgba(232,168,124,0.08) 0%, transparent 50%);
-  }
-  .serif { font-family: Georgia, 'Times New Roman', serif; }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(26,26,46,0.06), 0 0 0 1px rgba(255,255,255,0.6) inset;
-  }
-  .btn-primary {
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 20px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-weight: 500;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    letter-spacing: 0.01em;
-  }
-  .btn-primary:hover { background: #b03d25; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(200,75,49,0.3); }
-  .btn-ghost {
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-  .btn-danger {
-    background: transparent;
-    color: #c84b31;
-    border: 1px solid rgba(200,75,49,0.3);
-    border-radius: 6px;
-    padding: 5px 10px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .btn-danger:hover { background: rgba(200,75,49,0.08); }
-  input, select {
-    width: 100%;
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
-    color: var(--ink);
-    outline: none;
-    transition: border-color 0.15s;
-  }
-  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(200,75,49,0.1); }
-  label { font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 6px; }
-  .user-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px 20px;
-    transition: all 0.2s;
-    animation: slideIn 0.3s ease;
-  }
-  .user-card:hover { border-color: var(--accent2); box-shadow: 0 4px 16px rgba(26,26,46,0.08); }
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .tag {
-    display: inline-block;
-    background: rgba(200,75,49,0.1);
-    color: var(--accent);
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-  }
-  .divider {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 24px 0;
-  }
-  .modal-overlay {
-    position: fixed; inset: 0;
-    background: rgba(26,26,46,0.5);
-    backdrop-filter: blur(4px);
-    z-index: 50;
-    display: flex; align-items: center; justify-content: center;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.2s;
-  }
-  .modal-overlay.active { opacity: 1; pointer-events: all; }
-  .modal {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 32px;
-    width: 100%; max-width: 480px;
-    box-shadow: 0 24px 48px rgba(26,26,46,0.2);
-    transform: translateY(16px);
-    transition: transform 0.2s;
-  }
-  .modal-overlay.active .modal { transform: translateY(0); }
-  .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: var(--ink);
-    color: white;
-    padding: 12px 20px;
-    border-radius: 8px;
-    font-size: 14px;
-    z-index: 100;
-    transform: translateY(80px);
-    opacity: 0;
-    transition: all 0.3s ease;
-  }
-  .toast.show { transform: translateY(0); opacity: 1; }
-  .empty-state {
-    text-align: center;
-    padding: 48px 24px;
-    color: var(--muted);
-  }
-  .stat-pill {
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 12px;
-    color: var(--muted);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
+:root {
+  --bg:         #ffffff;
+  --bg-2:       #f7f7f5;
+  --bg-3:       #efeeeb;
+  --border:     #e3e2de;
+  --border-2:   #d3d1cb;
+  --text:       #1a1a1a;
+  --text-2:     #6b6b6b;
+  --text-3:     #999999;
+  --accent:     #e8632a;
+  --accent-h:   #d4521a;
+  --accent-s:   rgba(232,99,42,0.12);
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg:  0 16px 40px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.06);
+  --radius:     10px;
+  --radius-sm:  6px;
+  --radius-lg:  14px;
+  --t:          0.15s ease;
+}
+[data-theme="dark"] {
+  --bg:         #1f1f1f;
+  --bg-2:       #2a2a2a;
+  --bg-3:       #333333;
+  --border:     #3a3a3a;
+  --border-2:   #4a4a4a;
+  --text:       #f0f0f0;
+  --text-2:     #a0a0a0;
+  --text-3:     #666666;
+  --accent:     #f07340;
+  --accent-h:   #e8632a;
+  --accent-s:   rgba(240,115,64,0.15);
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg:  0 16px 40px rgba(0,0,0,0.5);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text);
+  font-size: 14px; line-height: 1.5; min-height: 100vh;
+  transition: background var(--t), color var(--t);
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+.container { max-width: 700px; margin: 0 auto; padding: 0 24px; }
+
+/* TOPBAR */
+.topbar {
+  position: sticky; top: 0; z-index: 100;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: background var(--t), border-color var(--t);
+}
+[data-theme="dark"] .topbar { background: rgba(31,31,31,0.85); }
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 52px; }
+.logo { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); text-decoration: none; }
+.logo-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+
+/* BUTTONS */
+.btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; cursor: pointer; transition: all var(--t); border: none; font-family: inherit; white-space: nowrap; }
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: var(--accent); color: #fff; padding: 7px 14px; box-shadow: 0 1px 2px rgba(232,99,42,0.3); }
+.btn-primary:hover { background: var(--accent-h); box-shadow: 0 2px 6px rgba(232,99,42,0.4); }
+.btn-ghost { background: transparent; color: var(--text-2); padding: 7px 12px; border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--bg-2); color: var(--text); border-color: var(--border-2); }
+.btn-danger { background: transparent; color: var(--text-3); padding: 5px 10px; font-size: 12px; border: 1px solid transparent; border-radius: var(--radius-sm); }
+.btn-danger:hover { background: rgba(220,38,38,0.08); color: #dc2626; border-color: rgba(220,38,38,0.2); }
+.theme-btn { width: 32px; height: 32px; border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; transition: all var(--t); color: var(--text-2); }
+.theme-btn:hover { background: var(--bg-2); color: var(--text); }
+
+/* STATUS */
+.status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: pulse 2.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { opacity:0.7; box-shadow: 0 0 0 4px rgba(34,197,94,0); } }
+
+/* MAIN */
+.main { padding: 36px 0 80px; }
+.page-header { margin-bottom: 28px; }
+.page-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.page-sub { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+.count { background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--border); }
+
+/* CARDS */
+.cards { display: flex; flex-direction: column; gap: 8px; }
+.card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; display: flex; align-items: center; gap: 14px;
+  transition: all var(--t); box-shadow: var(--shadow-sm);
+  animation: fadeUp 0.2s ease both;
+}
+.card:hover { border-color: var(--border-2); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+@keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+.avatar { width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #fff; }
+.card-info { flex: 1; min-width: 0; }
+.card-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+.tag { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 500; color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; }
+.tag-accent { color: var(--accent); background: var(--accent-s); border-color: rgba(232,99,42,0.2); }
+.card-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+/* EMPTY */
+.empty { text-align: center; padding: 56px 24px; border: 1px dashed var(--border-2); border-radius: var(--radius-lg); background: var(--bg-2); }
+.empty-icon { font-size: 28px; margin-bottom: 12px; opacity: 0.4; }
+.empty-title { font-size: 14px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
+.empty-sub { font-size: 13px; color: var(--text-3); }
+
+/* MODAL */
+.overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+.overlay.open { opacity: 1; pointer-events: all; }
+.modal { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); transform: translateY(12px) scale(0.98); transition: transform 0.2s; }
+.overlay.open .modal { transform: translateY(0) scale(1); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.close-btn { width: 28px; height: 28px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: var(--text-2); transition: all var(--t); }
+.close-btn:hover { background: var(--bg-3); color: var(--text); }
+
+/* FORM */
+.form-group { margin-bottom: 14px; }
+.form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; }
+.form-input { width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 11px; font-size: 14px; color: var(--text); font-family: inherit; outline: none; transition: all var(--t); }
+.form-input::placeholder { color: var(--text-3); }
+.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-s); background: var(--bg); }
+.form-hint { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+.form-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+/* TOAST */
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--text); color: var(--bg); font-size: 13px; font-weight: 500; padding: 10px 16px; border-radius: var(--radius); box-shadow: var(--shadow-lg); z-index: 300; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s; opacity: 0; white-space: nowrap; }
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 </style>
 </head>
 <body>
 
-<!-- HEADER -->
-<header style="border-bottom: 1px solid var(--border); background: rgba(245,240,232,0.8); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 40;">
-  <div style="max-width: 900px; margin: 0 auto; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;">
-    <div style="display: flex; align-items: baseline; gap: 12px;">
-      <h1 class="serif" style="font-size: 24px; line-height: 1;">Huiszoeker</h1>
-      <span style="font-size: 12px; color: var(--muted);">woningbot</span>
-    </div>
-    <div style="display: flex; align-items: center; gap: 12px;">
-      <div class="stat-pill">
-        <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite;"></span>
-        <span id="status-text">actief</span>
+<header class="topbar">
+  <div class="container topbar-inner">
+    <a class="logo" href="/">
+      <div class="logo-icon">🏠</div>
+      Huursignal
+    </a>
+    <div class="topbar-right">
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        actief
       </div>
-      <button class="btn-primary" onclick="openModal()">+ Gebruiker toevoegen</button>
+      <button class="theme-btn" id="theme-btn">🌙</button>
+      <button class="btn btn-primary" id="add-btn">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Gebruiker
+      </button>
     </div>
   </div>
 </header>
 
-<style>
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-</style>
+<main class="main">
+  <div class="container">
+    <div class="page-header">
+      <h1 class="page-title">Gebruikers</h1>
+      <p class="page-sub">Beheer wie notificaties ontvangt en met welke zoekcriteria.</p>
+    </div>
 
-<!-- MAIN -->
-<main style="max-width: 900px; margin: 0 auto; padding: 40px 24px;">
+    <div class="section-header">
+      <span class="section-label">
+        Actief
+        <span class="count" id="count">0</span>
+      </span>
+    </div>
 
-  <!-- HERO -->
-  <div style="margin-bottom: 40px;">
-    <p class="serif" style="font-size: 42px; line-height: 1.15; max-width: 520px;">
-      Jouw persoonlijke<br><em style="color: var(--accent);">woningwachter</em>
-    </p>
-    <p style="margin-top: 12px; color: var(--muted); font-size: 15px; max-width: 420px; line-height: 1.6;">
-      Voeg gebruikers toe met hun eigen zoekvoorkeuren. De bot controleert Pararius elke 15 minuten en stuurt een Telegram-bericht bij nieuwe woningen.
-    </p>
-  </div>
-
-  <!-- USERS GRID -->
-  <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-    <h2 style="font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);">
-      Actieve gebruikers <span id="user-count" style="color: var(--accent);">0</span>
-    </h2>
-  </div>
-
-  <div id="users-grid" style="display: flex; flex-direction: column; gap: 12px;">
-    <div class="empty-state" id="empty-state">
-      <div style="font-size: 32px; margin-bottom: 12px;">🏠</div>
-      <p style="font-size: 15px; font-weight: 500; margin-bottom: 6px;">Nog geen gebruikers</p>
-      <p style="font-size: 13px;">Voeg een gebruiker toe om te beginnen met zoeken.</p>
+    <div class="cards" id="cards">
+      <div class="empty" id="empty">
+        <div class="empty-icon">👤</div>
+        <div class="empty-title">Geen gebruikers</div>
+        <div class="empty-sub">Voeg een gebruiker toe om te beginnen.</div>
+      </div>
     </div>
   </div>
-
 </main>
 
 <!-- MODAL -->
-<div class="modal-overlay" id="modal-overlay" onclick="closeModalOnOverlay(event)">
+<div class="overlay" id="overlay">
   <div class="modal">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-      <h2 class="serif" style="font-size: 22px;" id="modal-title">Gebruiker toevoegen</h2>
-      <button onclick="closeModal()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:20px;line-height:1;">✕</button>
+    <div class="modal-header">
+      <h2 class="modal-title" id="modal-title">Gebruiker toevoegen</h2>
+      <button class="close-btn" id="close-btn">✕</button>
     </div>
 
-    <div style="display: flex; flex-direction: column; gap: 16px;">
-      <input type="hidden" id="edit-uid">
-
-      <div>
-        <label>Naam</label>
-        <input type="text" id="form-naam" placeholder="bijv. Jan">
+    <div class="form-group">
+      <label class="form-label">Naam</label>
+      <input class="form-input" type="text" id="f-naam" placeholder="bijv. Jan">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Telegram chat_id</label>
+      <input class="form-input" type="text" id="f-telegram" placeholder="bijv. 1497723745">
+      <div class="form-hint">Stuur /start naar je bot → haal chat_id op via getUpdates</div>
+    </div>
+    <hr class="divider">
+    <div class="form-group">
+      <label class="form-label">Stad / Regio</label>
+      <input class="form-input" type="text" id="f-stad" placeholder="bijv. den-haag">
+      <div class="form-hint">Pararius URL-notatie: kleine letters en koppeltekens</div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Min prijs (€)</label>
+        <input class="form-input" type="number" id="f-min" placeholder="0" min="0" step="50">
       </div>
-
-      <div>
-        <label>Telegram chat_id</label>
-        <input type="text" id="form-telegram" placeholder="bijv. 1497723745">
-      </div>
-
-      <hr class="divider" style="margin: 4px 0;">
-
-      <div>
-        <label>Regio / Stad</label>
-        <input type="text" id="form-stad" placeholder="bijv. den-haag, amsterdam, rotterdam">
-        <p style="font-size: 11px; color: var(--muted); margin-top: 5px;">Gebruik de URL-notatie van Pararius (kleine letters, koppeltekens)</p>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-        <div>
-          <label>Min prijs (€)</label>
-          <input type="number" id="form-min" placeholder="0" min="0" step="50">
-        </div>
-        <div>
-          <label>Max prijs (€)</label>
-          <input type="number" id="form-max" placeholder="1500" min="0" step="50">
-        </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Max prijs (€)</label>
+        <input class="form-input" type="number" id="f-max" placeholder="1500" min="0" step="50">
       </div>
     </div>
-
-    <div style="display: flex; gap: 10px; margin-top: 24px; justify-content: flex-end;">
-      <button class="btn-ghost" onclick="closeModal()">Annuleren</button>
-      <button class="btn-primary" onclick="saveUser()">Opslaan</button>
+    <div class="form-footer">
+      <button class="btn btn-ghost" id="cancel-btn">Annuleren</button>
+      <button class="btn btn-primary" id="save-btn">Opslaan</button>
     </div>
   </div>
 </div>
 
-<!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  document.getElementById('open-modal-btn').addEventListener('click', function() {
-    openModal();
+// Theme
+const html = document.documentElement;
+const themeBtn = document.getElementById('theme-btn');
+function setTheme(dark) {
+  html.setAttribute('data-theme', dark ? 'dark' : 'light');
+  themeBtn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+}
+const saved = localStorage.getItem('theme');
+setTheme(saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches);
+themeBtn.addEventListener('click', () => setTheme(html.getAttribute('data-theme') !== 'dark'));
+
+// State
+let editUid = null;
+
+// API
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined
   });
-  loadUsers();
-});
-
-let editingUid = null;
-
-async function loadUsers() {
-  const res = await fetch('/api/users');
-  const users = await res.json();
-  renderUsers(users);
+  return res.json();
 }
 
-function renderUsers(users) {
-  const grid = document.getElementById('users-grid');
-  const empty = document.getElementById('empty-state');
-  const count = document.getElementById('user-count');
+// Avatar colors
+function avatarBg(name) {
+  const colors = ['#e8632a','#f5a623','#27ae60','#2980b9','#8e44ad','#e74c3c'];
+  let h = 0;
+  for (let c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff;
+  return colors[Math.abs(h) % colors.length];
+}
+
+// Render
+async function loadUsers() {
+  const users = await api('GET', '/api/users');
   const entries = Object.entries(users);
+  const cards = document.getElementById('cards');
+  const empty = document.getElementById('empty');
+  document.getElementById('count').textContent = entries.length;
+  cards.querySelectorAll('.card').forEach(c => c.remove());
 
-  count.textContent = entries.length;
-
-  if (entries.length === 0) {
-    empty.style.display = 'block';
-    // Remove all user cards
-    grid.querySelectorAll('.user-card').forEach(c => c.remove());
-    return;
-  }
-
+  if (!entries.length) { empty.style.display = 'block'; return; }
   empty.style.display = 'none';
-  grid.querySelectorAll('.user-card').forEach(c => c.remove());
 
-  entries.forEach(([uid, u]) => {
+  entries.forEach(([uid, u], i) => {
     const card = document.createElement('div');
-    card.className = 'user-card';
+    card.className = 'card';
+    card.style.animationDelay = i * 40 + 'ms';
+    const letter = (u.naam || '?')[0].toUpperCase();
+    const color = avatarBg(u.naam || uid);
     card.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--accent2),var(--accent));display:flex;align-items:center;justify-content:center;color:white;font-weight:600;font-size:14px;">
-            ${(u.naam || '?')[0].toUpperCase()}
-          </div>
-          <div>
-            <div style="font-weight:600;font-size:15px;">${u.naam || 'Naamloos'}</div>
-            <div style="font-size:13px;color:var(--muted);">chat_id: ${u.telegram_username || 'niet ingesteld'}</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div class="avatar" style="background:linear-gradient(135deg,${color},${color}bb)">${letter}</div>
+      <div class="card-info">
+        <div class="card-name">${u.naam || 'Naamloos'}</div>
+        <div class="card-meta">
           <span class="tag">📍 ${u.stad}</span>
-          <span class="tag">€${u.min_prijs} – €${u.max_prijs}</span>
-          <button class="btn-ghost" style="padding:5px 12px;font-size:12px;" onclick="editUser('${uid}', ${JSON.stringify(u).replace(/"/g, '&quot;')})">Bewerken</button>
-          <button class="btn-danger" onclick="deleteUser('${uid}', '${u.naam}')">Verwijderen</button>
+          <span class="tag tag-accent">€${u.min_prijs} – €${u.max_prijs}</span>
+          <span class="tag">💬 ${u.telegram_chat_id || '—'}</span>
         </div>
       </div>
-    `;
-    grid.appendChild(card);
+      <div class="card-actions">
+        <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px" onclick='editUser("${uid}",${JSON.stringify(u).replace(/'/g,"&#39;")})'>Bewerken</button>
+        <button class="btn btn-danger" onclick="deleteUser('${uid}','${u.naam}')">Verwijder</button>
+      </div>`;
+    cards.appendChild(card);
   });
 }
 
-function openModal(uid = null, user = null) {
-  editingUid = uid;
+// Modal
+function openModal(uid, u) {
+  editUid = uid || null;
   document.getElementById('modal-title').textContent = uid ? 'Gebruiker bewerken' : 'Gebruiker toevoegen';
-  document.getElementById('form-naam').value = user?.naam || '';
-  document.getElementById('form-telegram').value = user?.telegram_username || '';
-  document.getElementById('form-stad').value = user?.stad || 'den-haag';
-  document.getElementById('form-min').value = user?.min_prijs ?? 0;
-  document.getElementById('form-max').value = user?.max_prijs ?? 1500;
-  document.getElementById('modal-overlay').classList.add('active');
-  setTimeout(() => document.getElementById('form-naam').focus(), 100);
+  document.getElementById('f-naam').value = u?.naam || '';
+  document.getElementById('f-telegram').value = u?.telegram_chat_id || '';
+  document.getElementById('f-stad').value = u?.stad || 'den-haag';
+  document.getElementById('f-min').value = u?.min_prijs ?? 0;
+  document.getElementById('f-max').value = u?.max_prijs ?? 1500;
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-naam').focus(), 150);
 }
 
-function editUser(uid, user) {
-  openModal(uid, user);
-}
+function editUser(uid, u) { openModal(uid, u); }
 
 function closeModal() {
-  document.getElementById('modal-overlay').classList.remove('active');
-  editingUid = null;
-}
-
-function closeModalOnOverlay(e) {
-  if (e.target === document.getElementById('modal-overlay')) closeModal();
+  document.getElementById('overlay').classList.remove('open');
+  editUid = null;
 }
 
 async function saveUser() {
+  const naam = document.getElementById('f-naam').value.trim();
+  const telegram = document.getElementById('f-telegram').value.trim();
+  if (!naam) { toast('Vul een naam in'); document.getElementById('f-naam').focus(); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); document.getElementById('f-telegram').focus(); return; }
+
   const data = {
-    naam: document.getElementById('form-naam').value.trim(),
-    telegram_username: document.getElementById('form-telegram').value.trim(),
-    stad: document.getElementById('form-stad').value.trim() || 'den-haag',
-    min_prijs: parseInt(document.getElementById('form-min').value) || 0,
-    max_prijs: parseInt(document.getElementById('form-max').value) || 1500,
+    naam, telegram_chat_id: telegram,
+    stad: document.getElementById('f-stad').value.trim() || 'den-haag',
+    min_prijs: parseInt(document.getElementById('f-min').value) || 0,
+    max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
   };
 
-  if (!data.naam) {
-    document.getElementById('form-naam').focus();
-    showToast('Vul een naam in');
-    return;
-  }
-  if (!data.telegram_username) {
-    document.getElementById('form-telegram').focus();
-    showToast('Vul een Telegram username in');
-    return;
-  }
-
-  let res;
-  if (editingUid) {
-    res = await fetch(`/api/users/${editingUid}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  if (editUid) {
+    await api('PUT', `/api/users/${editUid}`, data);
+    toast('✓ Opgeslagen');
   } else {
-    res = await fetch('/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    await api('POST', '/api/users', data);
+    toast('✓ Gebruiker toegevoegd');
   }
-
-  if (res.ok) {
-    closeModal();
-    loadUsers();
-    showToast(editingUid ? '✅ Opgeslagen' : '✅ Gebruiker toegevoegd');
-  }
+  closeModal();
+  loadUsers();
 }
 
 async function deleteUser(uid, naam) {
   if (!confirm(`${naam} verwijderen?`)) return;
-  await fetch(`/api/users/${uid}`, { method: 'DELETE' });
+  await api('DELETE', `/api/users/${uid}`);
+  toast('Verwijderd');
   loadUsers();
-  showToast('Gebruiker verwijderd');
 }
 
-function showToast(msg) {
+function toast(msg) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
-// Keyboard shortcut
+// Events
+document.getElementById('add-btn').addEventListener('click', () => openModal());
+document.getElementById('close-btn').addEventListener('click', closeModal);
+document.getElementById('cancel-btn').addEventListener('click', closeModal);
+document.getElementById('save-btn').addEventListener('click', saveUser);
+document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
+  if (e.key === 'Enter' && document.getElementById('overlay').classList.contains('open')) saveUser();
 });
 
+loadUsers();
 </script>
 </body>
 </html>
 '''
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=os.environ.get('DEBUG', 'false') == 'true')
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'false') == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug)
