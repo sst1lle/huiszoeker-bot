@@ -466,8 +466,10 @@ async function doLogin() {
   if (res.ok) {
     isAdmin = true;
     closeLogin();
+    document.getElementById('admin-badge').style.display = 'inline-flex';
+    document.getElementById('admin-btn').textContent = 'Uitloggen';
     toast('✓ Ingelogd als admin');
-    await loadUsers();
+    loadUsers();
   } else {
     document.getElementById('login-error').style.display = 'block';
   }
@@ -476,8 +478,10 @@ async function doLogin() {
 async function doLogout() {
   await api('POST', '/api/logout');
   isAdmin = false;
+  document.getElementById('admin-badge').style.display = 'none';
+  document.getElementById('admin-btn').textContent = 'Inloggen';
   toast('Uitgelogd');
-  checkAdmin();
+  loadUsers();
 }
 
 // Admin knop toggle
