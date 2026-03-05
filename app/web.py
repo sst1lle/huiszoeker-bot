@@ -1,8 +1,11 @@
-from flask import Flask, request, jsonify
-import json, os, uuid
+from flask import Flask, request, jsonify, session
+import json, os, uuid, hashlib
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'huursignal-secret-change-me')
+
 USERS_DIR = os.environ.get('USERS_DIR', './data/users')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin')
 os.makedirs(USERS_DIR, exist_ok=True)
 
 def laad_users():
@@ -25,9 +28,29 @@ def verwijder_user(uid):
     if os.path.exists(path):
         os.remove(path)
 
+def is_admin():
+    return session.get('admin') == True
+
 @app.route('/')
 def index():
     return HTML_TEMPLATE
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.json
+    if data.get('password') == ADMIN_PASSWORD:
+        session['admin'] = True
+        return jsonify({'ok': True})
+    return jsonify({'ok': False, 'error': 'Verkeerd wachtwoord'}), 401
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    session.pop('admin', None)
+    return jsonify({'ok': True})
+
+@app.route('/api/session')
+def check_session():
+    return jsonify({'admin': is_admin()})
 
 @app.route('/api/users', methods=['GET'])
 def get_users():
@@ -49,6 +72,8 @@ def add_user():
 
 @app.route('/api/users/<uid>', methods=['PUT'])
 def update_user(uid):
+    if not is_admin():
+        return jsonify({'error': 'Niet ingelogd als admin'}), 403
     data = request.json
     user = {
         'naam': data.get('naam', ''),
@@ -62,6 +87,8 @@ def update_user(uid):
 
 @app.route('/api/users/<uid>', methods=['DELETE'])
 def delete_user(uid):
+    if not is_admin():
+        return jsonify({'error': 'Niet ingelogd als admin'}), 403
     verwijder_user(uid)
     return jsonify({'ok': True})
 
@@ -120,13 +147,11 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
 .container { max-width: 700px; margin: 0 auto; padding: 0 24px; }
 
-/* TOPBAR */
 .topbar {
   position: sticky; top: 0; z-index: 100;
   border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   transition: background var(--t), border-color var(--t);
 }
 [data-theme="dark"] .topbar { background: rgba(31,31,31,0.85); }
@@ -135,7 +160,6 @@ body {
 .logo-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 
-/* BUTTONS */
 .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; cursor: pointer; transition: all var(--t); border: none; font-family: inherit; white-space: nowrap; }
 .btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--accent); color: #fff; padding: 7px 14px; box-shadow: 0 1px 2px rgba(232,99,42,0.3); }
@@ -145,14 +169,15 @@ body {
 .btn-danger { background: transparent; color: var(--text-3); padding: 5px 10px; font-size: 12px; border: 1px solid transparent; border-radius: var(--radius-sm); }
 .btn-danger:hover { background: rgba(220,38,38,0.08); color: #dc2626; border-color: rgba(220,38,38,0.2); }
 .theme-btn { width: 32px; height: 32px; border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; transition: all var(--t); color: var(--text-2); }
-.theme-btn:hover { background: var(--bg-2); color: var(--text); }
+.theme-btn:hover { background: var(--bg-2); }
 
-/* STATUS */
 .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px; }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: pulse 2.5s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { opacity:0.7; box-shadow: 0 0 0 4px rgba(34,197,94,0); } }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: blink 2.5s ease-in-out infinite; }
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 
-/* MAIN */
+/* ADMIN BADGE */
+.admin-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-s); border: 1px solid rgba(232,99,42,0.25); border-radius: 20px; padding: 3px 10px; }
+
 .main { padding: 36px 0 80px; }
 .page-header { margin-bottom: 28px; }
 .page-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
@@ -161,14 +186,8 @@ body {
 .section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 .count { background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--border); }
 
-/* CARDS */
 .cards { display: flex; flex-direction: column; gap: 8px; }
-.card {
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 14px 16px; display: flex; align-items: center; gap: 14px;
-  transition: all var(--t); box-shadow: var(--shadow-sm);
-  animation: fadeUp 0.2s ease both;
-}
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; display: flex; align-items: center; gap: 14px; transition: all var(--t); box-shadow: var(--shadow-sm); animation: fadeUp 0.2s ease both; }
 .card:hover { border-color: var(--border-2); box-shadow: var(--shadow-md); transform: translateY(-1px); }
 @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 .avatar { width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #fff; }
@@ -179,13 +198,11 @@ body {
 .tag-accent { color: var(--accent); background: var(--accent-s); border-color: rgba(232,99,42,0.2); }
 .card-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
-/* EMPTY */
 .empty { text-align: center; padding: 56px 24px; border: 1px dashed var(--border-2); border-radius: var(--radius-lg); background: var(--bg-2); }
 .empty-icon { font-size: 28px; margin-bottom: 12px; opacity: 0.4; }
 .empty-title { font-size: 14px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
 .empty-sub { font-size: 13px; color: var(--text-3); }
 
-/* MODAL */
 .overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
 .overlay.open { opacity: 1; pointer-events: all; }
 .modal { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); transform: translateY(12px) scale(0.98); transition: transform 0.2s; }
@@ -193,9 +210,8 @@ body {
 .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
 .close-btn { width: 28px; height: 28px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: var(--text-2); transition: all var(--t); }
-.close-btn:hover { background: var(--bg-3); color: var(--text); }
+.close-btn:hover { background: var(--bg-3); }
 
-/* FORM */
 .form-group { margin-bottom: 14px; }
 .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; }
 .form-input { width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 11px; font-size: 14px; color: var(--text); font-family: inherit; outline: none; transition: all var(--t); }
@@ -206,7 +222,6 @@ body {
 .divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 .form-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 
-/* TOAST */
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--text); color: var(--bg); font-size: 13px; font-weight: 500; padding: 10px 16px; border-radius: var(--radius); box-shadow: var(--shadow-lg); z-index: 300; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s; opacity: 0; white-space: nowrap; }
 .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 </style>
@@ -224,7 +239,9 @@ body {
         <span class="status-dot"></span>
         actief
       </div>
+      <span class="admin-badge" id="admin-badge" style="display:none">🔑 Admin</span>
       <button class="theme-btn" id="theme-btn">🌙</button>
+      <button class="btn btn-ghost" id="admin-btn">Inloggen</button>
       <button class="btn btn-primary" id="add-btn">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         Gebruiker
@@ -239,14 +256,9 @@ body {
       <h1 class="page-title">Gebruikers</h1>
       <p class="page-sub">Beheer wie notificaties ontvangt en met welke zoekcriteria.</p>
     </div>
-
     <div class="section-header">
-      <span class="section-label">
-        Actief
-        <span class="count" id="count">0</span>
-      </span>
+      <span class="section-label">Actief <span class="count" id="count">0</span></span>
     </div>
-
     <div class="cards" id="cards">
       <div class="empty" id="empty">
         <div class="empty-icon">👤</div>
@@ -257,14 +269,13 @@ body {
   </div>
 </main>
 
-<!-- MODAL -->
+<!-- GEBRUIKER MODAL -->
 <div class="overlay" id="overlay">
   <div class="modal">
     <div class="modal-header">
       <h2 class="modal-title" id="modal-title">Gebruiker toevoegen</h2>
       <button class="close-btn" id="close-btn">✕</button>
     </div>
-
     <div class="form-group">
       <label class="form-label">Naam</label>
       <input class="form-input" type="text" id="f-naam" placeholder="bijv. Jan">
@@ -297,6 +308,25 @@ body {
   </div>
 </div>
 
+<!-- LOGIN MODAL -->
+<div class="overlay" id="login-overlay">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h2 class="modal-title">Admin inloggen</h2>
+      <button class="close-btn" id="login-close">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Wachtwoord</label>
+      <input class="form-input" type="password" id="f-password" placeholder="••••••••">
+      <div class="form-hint" id="login-error" style="color:#dc2626;display:none">Verkeerd wachtwoord</div>
+    </div>
+    <div class="form-footer">
+      <button class="btn btn-ghost" id="login-cancel">Annuleren</button>
+      <button class="btn btn-primary" id="login-submit">Inloggen</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -314,6 +344,7 @@ themeBtn.addEventListener('click', () => setTheme(html.getAttribute('data-theme'
 
 // State
 let editUid = null;
+let isAdmin = false;
 
 // API
 async function api(method, path, body) {
@@ -325,7 +356,16 @@ async function api(method, path, body) {
   return res.json();
 }
 
-// Avatar colors
+// Admin status
+async function checkAdmin() {
+  const data = await api('GET', '/api/session');
+  isAdmin = data.admin;
+  document.getElementById('admin-badge').style.display = isAdmin ? 'inline-flex' : 'none';
+  document.getElementById('admin-btn').textContent = isAdmin ? 'Uitloggen' : 'Inloggen';
+  loadUsers();
+}
+
+// Avatar
 function avatarBg(name) {
   const colors = ['#e8632a','#f5a623','#27ae60','#2980b9','#8e44ad','#e74c3c'];
   let h = 0;
@@ -333,7 +373,7 @@ function avatarBg(name) {
   return colors[Math.abs(h) % colors.length];
 }
 
-// Render
+// Render users
 async function loadUsers() {
   const users = await api('GET', '/api/users');
   const entries = Object.entries(users);
@@ -351,6 +391,13 @@ async function loadUsers() {
     card.style.animationDelay = i * 40 + 'ms';
     const letter = (u.naam || '?')[0].toUpperCase();
     const color = avatarBg(u.naam || uid);
+
+    // Admin knoppen alleen tonen als ingelogd
+    const adminActions = isAdmin ? `
+      <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px" onclick='editUser("${uid}",${JSON.stringify(u).replace(/'/g,"&#39;")})'>Bewerken</button>
+      <button class="btn btn-danger" onclick="deleteUser('${uid}','${u.naam}')">Verwijder</button>
+    ` : '';
+
     card.innerHTML = `
       <div class="avatar" style="background:linear-gradient(135deg,${color},${color}bb)">${letter}</div>
       <div class="card-info">
@@ -361,15 +408,12 @@ async function loadUsers() {
           <span class="tag">💬 ${u.telegram_chat_id || '—'}</span>
         </div>
       </div>
-      <div class="card-actions">
-        <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px" onclick='editUser("${uid}",${JSON.stringify(u).replace(/'/g,"&#39;")})'>Bewerken</button>
-        <button class="btn btn-danger" onclick="deleteUser('${uid}','${u.naam}')">Verwijder</button>
-      </div>`;
+      <div class="card-actions">${adminActions}</div>`;
     cards.appendChild(card);
   });
 }
 
-// Modal
+// Gebruiker modal
 function openModal(uid, u) {
   editUid = uid || null;
   document.getElementById('modal-title').textContent = uid ? 'Gebruiker bewerken' : 'Gebruiker toevoegen';
@@ -381,27 +425,20 @@ function openModal(uid, u) {
   document.getElementById('overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-naam').focus(), 150);
 }
-
 function editUser(uid, u) { openModal(uid, u); }
-
-function closeModal() {
-  document.getElementById('overlay').classList.remove('open');
-  editUid = null;
-}
+function closeModal() { document.getElementById('overlay').classList.remove('open'); editUid = null; }
 
 async function saveUser() {
   const naam = document.getElementById('f-naam').value.trim();
   const telegram = document.getElementById('f-telegram').value.trim();
-  if (!naam) { toast('Vul een naam in'); document.getElementById('f-naam').focus(); return; }
-  if (!telegram) { toast('Vul een Telegram chat_id in'); document.getElementById('f-telegram').focus(); return; }
-
+  if (!naam) { toast('Vul een naam in'); return; }
+  if (!telegram) { toast('Vul een Telegram chat_id in'); return; }
   const data = {
     naam, telegram_chat_id: telegram,
     stad: document.getElementById('f-stad').value.trim() || 'den-haag',
     min_prijs: parseInt(document.getElementById('f-min').value) || 0,
     max_prijs: parseInt(document.getElementById('f-max').value) || 1500,
   };
-
   if (editUid) {
     await api('PUT', `/api/users/${editUid}`, data);
     toast('✓ Opgeslagen');
@@ -409,36 +446,67 @@ async function saveUser() {
     await api('POST', '/api/users', data);
     toast('✓ Gebruiker toegevoegd');
   }
-  closeModal();
-  loadUsers();
+  closeModal(); loadUsers();
 }
 
 async function deleteUser(uid, naam) {
   if (!confirm(`${naam} verwijderen?`)) return;
-  await api('DELETE', `/api/users/${uid}`);
-  toast('Verwijderd');
-  loadUsers();
+  const res = await api('DELETE', `/api/users/${uid}`);
+  if (res.error) { toast('Niet ingelogd als admin'); return; }
+  toast('Verwijderd'); loadUsers();
 }
 
-function toast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._t);
-  t._t = setTimeout(() => t.classList.remove('show'), 2800);
+// Login modal
+function openLogin() { document.getElementById('login-overlay').classList.add('open'); setTimeout(() => document.getElementById('f-password').focus(), 150); }
+function closeLogin() { document.getElementById('login-overlay').classList.remove('open'); document.getElementById('f-password').value = ''; document.getElementById('login-error').style.display = 'none'; }
+
+async function doLogin() {
+  const pw = document.getElementById('f-password').value;
+  const res = await api('POST', '/api/login', { password: pw });
+  if (res.ok) {
+    isAdmin = true;
+    closeLogin();
+    toast('✓ Ingelogd als admin');
+    checkAdmin();
+  } else {
+    document.getElementById('login-error').style.display = 'block';
+  }
 }
+
+async function doLogout() {
+  await api('POST', '/api/logout');
+  isAdmin = false;
+  toast('Uitgelogd');
+  checkAdmin();
+}
+
+// Admin knop toggle
+document.getElementById('admin-btn').addEventListener('click', () => {
+  if (isAdmin) doLogout();
+  else openLogin();
+});
 
 // Events
 document.getElementById('add-btn').addEventListener('click', () => openModal());
 document.getElementById('close-btn').addEventListener('click', closeModal);
 document.getElementById('cancel-btn').addEventListener('click', closeModal);
 document.getElementById('save-btn').addEventListener('click', saveUser);
+document.getElementById('login-close').addEventListener('click', closeLogin);
+document.getElementById('login-cancel').addEventListener('click', closeLogin);
+document.getElementById('login-submit').addEventListener('click', doLogin);
+
 document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
+document.getElementById('login-overlay').addEventListener('click', e => { if (e.target.id === 'login-overlay') closeLogin(); });
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
-  if (e.key === 'Enter' && document.getElementById('overlay').classList.contains('open')) saveUser();
+  if (e.key === 'Escape') { closeModal(); closeLogin(); }
+  if (e.key === 'Enter') {
+    if (document.getElementById('overlay').classList.contains('open')) saveUser();
+    if (document.getElementById('login-overlay').classList.contains('open')) doLogin();
+  }
 });
 
-loadUsers();
+checkAdmin();
 </script>
 </body>
 </html>
