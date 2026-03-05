@@ -467,7 +467,7 @@ async function doLogin() {
     isAdmin = true;
     closeLogin();
     toast('✓ Ingelogd als admin');
-    checkAdmin();
+    await loadUsers();
   } else {
     document.getElementById('login-error').style.display = 'block';
   }
