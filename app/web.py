@@ -291,12 +291,11 @@ body {
     </div>
     <div class="form-group">
       <label class="form-label">Naam</label>
-      <input class="form-input" type="text" id="f-naam" placeholder="bijv. Jan">
+      <input class="form-input" type="text" id="f-naam" placeholder="bijv. Piet">
     </div>
     <div class="form-group">
       <label class="form-label">Telegram chat_id</label>
       <input class="form-input" type="text" id="f-telegram" placeholder="bijv. 1497723745">
-      <div class="form-hint">Stuur /start naar je bot → haal chat_id op via getUpdates</div>
     </div>
     <hr class="divider">
     <div class="form-group">
@@ -507,7 +506,7 @@ const steps = [
     icon: '🤖',
     title: 'Bot zoeken in Telegram',
     body: `
-      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <p>Open Telegram en zoek naar de bot hieronder via de zoekbalk bovenin.</p>
       <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
@@ -645,7 +644,7 @@ const steps = [
     icon: '🤖',
     title: 'Bot zoeken in Telegram',
     body: `
-      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <p>Open Telegram en zoek naar de bot herionder via de zoekbalk bovenin.</p>
       <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
@@ -813,7 +812,7 @@ const steps = [
     icon: '🤖',
     title: 'Bot zoeken in Telegram',
     body: `
-      <p>Open Telegram en zoek naar jouw bot via de zoekbalk bovenin.</p>
+      <p>Open Telegram en zoek naar de bot herionder via de zoekbalk bovenin.</p>
       <span class="step-code">@mijn_huiszoeker_bot</span>
       <p>Klik op de bot en druk op <strong>Start</strong> of stuur het commando:</p>
       <span class="step-code">/start</span>
