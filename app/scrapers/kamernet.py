@@ -56,83 +56,85 @@ def _parse_prijs(text: str) -> int | None:
     return int(match.group()) if match else None
 
 
+# Mapping van Engelse Kamernet typenamen naar Nederlands
+_TYPE_NL = {
+    "apartment": "appartement",
+    "room": "kamer",
+    "studio": "studio",
+    "student housing": "studentenwoning",
+    "anti-squat": "anti-kraak",
+}
+
+
 def _parse_listings(html: str, stad: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
-    # Kamernet gebruikt div[data-listing-id] of vergelijkbare containers
-    # Probeer meerdere selectors om robuust te zijn tegen layout-wijzigingen
-    items = (
-        soup.select("div[data-listing-id]") or
-        soup.select("div.tile") or
-        soup.select("article.listing-item") or
-        soup.select("div[class*='RoomTile'], div[class*='SearchResult']")
-    )
+    # Elke listing is een <a class="... SearchResultCard_root__* ...">
+    # De CSS-module hash (__hSxn3) kan veranderen bij builds, dus [class*=] gebruiken
+    items = soup.select('a[class*="SearchResultCard_root"]')
 
     for item in items:
-        # URL
-        link_el = item.select_one("a[href*='/huren/']")
-        if not link_el:
-            link_el = item.select_one("a[href]")
-        if not link_el:
-            continue
-
-        href = link_el.get("href", "")
-        if not href:
+        # URL (het <a> element IS de container)
+        href = item.get("href", "")
+        if not href or "/for-rent/" not in href:
             continue
         if not href.startswith("http"):
             href = BASE_URL + href
 
-        # Sla niet-listing URLs over
-        if "/huren/" not in href and "kamernet.nl" not in href:
-            continue
-
-        # external_id uit URL (numeriek ID)
-        id_match = re.search(r"/(\d{4,})", href)
+        # external_id: URL eindigt op "type-{id}", bijv. "apartment-2365513"
+        id_match = re.search(r"-(\d+)$", href)
         external_id = id_match.group(1) if id_match else None
 
-        # Adres — probeer meerdere selectors
-        adres = None
-        for sel in ["h2", "h3", "[class*='title']", "[class*='Title']", "[class*='address']", "[class*='Address']"]:
-            el = item.select_one(sel)
-            if el and el.text.strip():
-                adres = el.text.strip()
-                break
-
-        # Prijs
-        prijs = None
-        for sel in ["[class*='price']", "[class*='Price']", "[class*='prijs']", "[class*='rent']", "[class*='Rent']"]:
-            el = item.select_one(sel)
-            if el:
-                prijs = _parse_prijs(el.text)
-                if prijs:
-                    break
-
-        # Oppervlakte
-        oppervlakte = None
-        for sel in ["[class*='surface']", "[class*='Surface']", "[class*='size']", "[class*='Size']", "[class*='m2']"]:
-            el = item.select_one(sel)
-            if el:
-                m = re.search(r"(\d+)", el.text)
-                if m:
-                    oppervlakte = int(m.group(1))
-                    break
-
-        # Type woning
-        type_woning = None
-        for sel in ["[class*='type']", "[class*='Type']", "[class*='kind']", "[class*='Kind']", "[class*='category']"]:
-            el = item.select_one(sel)
-            if el and el.text.strip():
-                type_woning = el.text.strip().lower()
-                break
-
-        # Eerste foto
+        # Foto: <img class="... SearchResultCard_media__* ...">
         foto_url = None
-        img_el = item.select_one("img[src]")
+        img_el = item.select_one('img[class*="SearchResultCard_media"]')
+        if not img_el:
+            img_el = item.select_one("img[src]")
         if img_el:
             src = img_el.get("src", "")
             if src and not src.endswith(".svg"):
                 foto_url = src if src.startswith("http") else BASE_URL + src
+
+        # Content rows: elke <div class="SearchResultCard_contentRow__*">
+        # Rij 0: adres ("Dorpsstraat, Den Haag")
+        # Rij 1: details ("120 m²", "furnished", "Apartment")
+        # Rij 2: beschikbaarheid ("From 1 Apr 2026")
+        # Rij 3 (laatste): prijs ("€1,575 /month")
+        rows = item.select('div[class*="SearchResultCard_contentRow"]')
+
+        # Adres uit rij 0: twee spans samenvoegen
+        adres = None
+        if rows:
+            spans = rows[0].select("span")
+            parts = [s.text.strip().rstrip(",") for s in spans if s.text.strip()]
+            if parts:
+                adres = ", ".join(parts)
+
+        # Oppervlakte en type uit rij 1
+        oppervlakte = None
+        type_woning = None
+        if len(rows) > 1:
+            # Type: <p class="... MuiTypography-noWrap ..."> — stabiele MUI-klasse
+            type_el = rows[1].select_one("p.MuiTypography-noWrap")
+            if type_el:
+                raw_type = type_el.text.strip().lower()
+                type_woning = _TYPE_NL.get(raw_type, raw_type)
+
+            # Oppervlakte: p met "m²" in de tekst
+            for p in rows[1].select("p"):
+                if "m²" in p.text:
+                    m = re.search(r"(\d+)", p.text)
+                    if m:
+                        oppervlakte = int(m.group(1))
+                    break
+
+        # Prijs uit laatste rij: <span class="... MuiTypography-h5 ...">
+        prijs = None
+        if rows:
+            price_span = rows[-1].select_one("span.MuiTypography-h5")
+            if price_span:
+                prijs = _parse_prijs(price_span.text)
 
         results.append({
             "source": "kamernet",
