@@ -6,7 +6,7 @@ BASE_URL = "https://kamernet.nl"
 FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 # Mapping van type_woning naar Kamernet URL-segment
-TTYPE_SEGMENT = {
+TYPE_SEGMENT = {
     "kamer":            "room",
     "appartement":      "apartment",
     "studio":           "studio",
