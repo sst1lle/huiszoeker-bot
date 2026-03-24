@@ -6,12 +6,13 @@ BASE_URL = "https://kamernet.nl"
 FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 # Mapping van type_woning naar Kamernet URL-segment
-TYPE_SEGMENT = {
-    "kamer": "kamers",
-    "appartement": "appartementen",
-    "studio": "studios",
-    "anti-kraak": "anti-kraak",
-    "studentenwoning": "studentenwoningen",
+TTYPE_SEGMENT = {
+    "kamer":            "room",
+    "appartement":      "apartment",
+    "studio":           "studio",
+    "studentenwoning":  "student-housing",
+    "gemeubileerd":     "furnished-apartments",
+    "anti-kraak":       "apartment",  # geen aparte pagina, filter handmatig
 }
 
 
@@ -166,7 +167,7 @@ def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str])
         if not segment:
             print(f"[kamernet] ⚠️ Onbekend type: {type_woning}, overgeslagen", flush=True)
             continue
-        url = f"{BASE_URL}/huren/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
+        url =f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
         if gemeubileerd_filter:
             url += "&furnishing=furnished"
         urls_to_scrape.append(url)
