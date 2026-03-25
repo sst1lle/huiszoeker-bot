@@ -300,6 +300,74 @@ def api_logout():
     return jsonify({"ok": True})
 
 
+@app.route("/reset-password")
+def reset_password():
+    body = """
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Nieuw wachtwoord</h1>
+    <p class="sub">Kies een nieuw wachtwoord voor je account</p>
+    <div class="err" id="err"></div>
+    <div class="ok"  id="ok"></div>
+    <div class="field">
+      <label>Nieuw wachtwoord</label>
+      <input type="password" id="pwd" placeholder="Minimaal 6 tekens" autocomplete="new-password">
+    </div>
+    <button class="btn btn-primary" onclick="doReset()">Wachtwoord instellen</button>
+  </div>
+</div>
+<script>
+  function getHashParam(key) {
+    const hash = window.location.hash.substring(1);
+    const params = Object.fromEntries(new URLSearchParams(hash));
+    return params[key] || '';
+  }
+  async function doReset() {
+    const err = document.getElementById('err');
+    const ok  = document.getElementById('ok');
+    err.style.display = 'none'; ok.style.display = 'none';
+    const access_token   = getHashParam('access_token');
+    const refresh_token  = getHashParam('refresh_token');
+    const password       = document.getElementById('pwd').value;
+    if (!access_token) {
+      err.textContent = 'Ongeldige resetlink. Vraag een nieuwe aan.';
+      err.style.display = 'block'; return;
+    }
+    const r = await fetch('/api/reset-password', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ access_token, refresh_token, password })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      ok.textContent = 'Wachtwoord ingesteld! Je wordt doorgestuurd...';
+      ok.style.display = 'block';
+      setTimeout(() => location.href = '/', 2000);
+    } else {
+      err.textContent = d.error || 'Instellen mislukt';
+      err.style.display = 'block';
+    }
+  }
+</script>"""
+    return _page("Wachtwoord instellen", body, nav=False)
+
+
+@app.route("/api/reset-password", methods=["POST"])
+def api_reset_password():
+    data = request.json or {}
+    access_token  = data.get("access_token", "")
+    refresh_token = data.get("refresh_token", "")
+    password      = data.get("password", "")
+    if not access_token or not password:
+        return jsonify({"ok": False, "error": "Ongeldige aanvraag"}), 400
+    try:
+        db = get_db()
+        db.auth.set_session(access_token, refresh_token)
+        db.auth.update_user({"password": password})
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
 # ── Preferences form helper ───────────────────────────────────────────────────
 
 def _pref_form(pref, submit_label, redirect_to):
