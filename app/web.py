@@ -204,7 +204,7 @@ def login():
       <input type="password" id="pwd" placeholder="&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;" autocomplete="current-password">
     </div>
     <button class="btn btn-primary" onclick="doLogin()">Inloggen</button>
-    <p class="auth-foot">Nog geen account? <a href="/register">Registreren</a></p>
+    <p class="auth-foot">Nog geen account? <a href="/register">Registreren</a> &nbsp;·&nbsp; <a href="/forgot-password">Wachtwoord vergeten</a></p>
   </div>
 </div>
 <script>
@@ -300,6 +300,63 @@ def api_register():
 def api_logout():
     session.clear()
     return jsonify({"ok": True})
+
+
+@app.route("/forgot-password")
+def forgot_password():
+    body = """
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Wachtwoord vergeten</h1>
+    <p class="sub">We sturen je een resetlink per e-mail</p>
+    <div class="err" id="err"></div>
+    <div class="ok"  id="ok"></div>
+    <div class="field">
+      <label>E-mailadres</label>
+      <input type="email" id="email" placeholder="jij@voorbeeld.nl" autocomplete="email">
+    </div>
+    <button class="btn btn-primary" onclick="doForgot()">Verstuur resetlink</button>
+    <p class="auth-foot"><a href="/">Terug naar inloggen</a></p>
+  </div>
+</div>
+<script>
+  document.addEventListener('keydown', e => { if (e.key === 'Enter') doForgot(); });
+  async function doForgot() {
+    const err = document.getElementById('err');
+    const ok  = document.getElementById('ok');
+    err.style.display = 'none'; ok.style.display = 'none';
+    const r = await fetch('/api/forgot-password', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: document.getElementById('email').value.trim() })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      ok.textContent = 'Als dit e-mailadres bekend is, ontvang je een resetlink.';
+      ok.style.display = 'block';
+    } else {
+      err.textContent = d.error || 'Versturen mislukt';
+      err.style.display = 'block';
+    }
+  }
+</script>"""
+    return _page("Wachtwoord vergeten", body, nav=False)
+
+
+@app.route("/api/forgot-password", methods=["POST"])
+def api_forgot_password():
+    data = request.json or {}
+    email = data.get("email", "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "E-mailadres vereist"}), 400
+    try:
+        db = get_db()
+        db.auth.reset_password_for_email(
+            email,
+            options={"redirect_to": "https://huursignal.com/reset-password"}
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/reset-password", strict_slashes=False)
