@@ -38,6 +38,15 @@
       {% endfor %}
     </div>
   </div>
+  <div class="field">
+    <label>Zoekradius <span style="font-weight:400;color:#a1a1aa">(leeg = alleen opgegeven stad)</span></label>
+    <select id="radius_km">
+      <option value="" {{ 'selected' if not pref.radius_km else '' }}>Alleen stad</option>
+      <option value="5"  {{ 'selected' if pref.radius_km == 5  else '' }}>5 km</option>
+      <option value="10" {{ 'selected' if pref.radius_km == 10 else '' }}>10 km</option>
+      <option value="25" {{ 'selected' if pref.radius_km == 25 else '' }}>25 km</option>
+    </select>
+  </div>
   <div class="form-actions">
     <button class="btn btn-primary" style="width:auto" onclick="savePref('{{ redirect_to }}')">{{ submit_label }}</button>
     <a href="/dashboard" class="btn btn-outline">Annuleren</a>

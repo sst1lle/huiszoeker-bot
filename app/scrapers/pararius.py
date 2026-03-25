@@ -72,10 +72,13 @@ def _extract_image(item) -> str | None:
 def scrape_pararius(
     stad: str = "den-haag",
     min_prijs: int = 0,
-    max_prijs: int = 1200
+    max_prijs: int = 1200,
+    radius_km: int | None = None,
 ) -> list[dict]:
 
     target_url = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
+    if radius_km:
+        target_url += f"/straal-{radius_km}"
 
     try:
         print(f"[pararius] Fetch via FlareSolverr: {target_url}")

@@ -213,14 +213,15 @@ if __name__ == '__main__':
                 min_p = pref.get("min_prijs") or 0
                 max_p = pref.get("max_prijs") or 1500
                 types = pref.get("type_woning") or []
+                radius = pref.get("radius_km") or None
 
-                p_key = f"{stad}-{min_p}-{max_p}"
+                p_key = f"{stad}-{min_p}-{max_p}-r{radius}"
                 if p_key not in pararius_combis:
-                    pararius_combis[p_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p}
+                    pararius_combis[p_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "radius_km": radius}
 
-                k_key = f"{stad}-{min_p}-{max_p}-{','.join(sorted(types))}"
+                k_key = f"{stad}-{min_p}-{max_p}-{','.join(sorted(types))}-r{radius}"
                 if k_key not in kamernet_combis:
-                    kamernet_combis[k_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "types": types}
+                    kamernet_combis[k_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "types": types, "radius_km": radius}
 
             totaal = 0
 
@@ -228,7 +229,8 @@ if __name__ == '__main__':
                 woningen = scrape_pararius(
                     stad=params["stad"],
                     min_prijs=params["min_prijs"],
-                    max_prijs=params["max_prijs"]
+                    max_prijs=params["max_prijs"],
+                    radius_km=params["radius_km"],
                 )
                 if not woningen:
                     asyncio.run(stuur_warning(
@@ -244,7 +246,8 @@ if __name__ == '__main__':
                     stad=params["stad"],
                     min_prijs=params["min_prijs"],
                     max_prijs=params["max_prijs"],
-                    types=params["types"]
+                    types=params["types"],
+                    radius_km=params["radius_km"],
                 )
                 for w in woningen:
                     upsert_listing(w)

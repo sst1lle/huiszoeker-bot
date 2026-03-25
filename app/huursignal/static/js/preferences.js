@@ -11,6 +11,7 @@ async function savePref(redirectTo) {
     min_prijs:        parseInt(document.getElementById('min_prijs').value) || 0,
     max_prijs:        parseInt(document.getElementById('max_prijs').value) || 1500,
     type_woning:      types,
+    radius_km:        parseInt(document.getElementById('radius_km').value) || null,
   };
   document.getElementById('err').style.display = 'none';
   const r = await fetch('/api/preferences', {

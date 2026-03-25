@@ -39,6 +39,7 @@ def api_preferences():
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),
+        "radius_km":        data.get("radius_km") or None,
         "updated_at":       datetime.now(timezone.utc).isoformat(),
     }
 

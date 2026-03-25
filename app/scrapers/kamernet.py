@@ -152,7 +152,7 @@ def _parse_listings(html: str, stad: str) -> list[dict]:
     return results
 
 
-def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str]) -> list[dict]:
+def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str], radius_km: int | None = None) -> list[dict]:
     """Geeft lijst van listing-dicts terug voor Kamernet."""
     stad_slug = stad.lower().replace(" ", "-")
 
@@ -169,7 +169,9 @@ def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str])
         if not segment:
             print(f"[kamernet] ⚠️ Onbekend type: {type_woning}, overgeslagen", flush=True)
             continue
-        url =f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
+        url = f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
+        if radius_km:
+            url += f"&radius={radius_km}"
         if gemeubileerd_filter:
             url += "&furnishing=furnished"
         urls_to_scrape.append(url)

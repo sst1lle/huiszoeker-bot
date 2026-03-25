@@ -32,6 +32,7 @@ def admin_page():
             "max_prijs":      pref.get("max_prijs") or 0,
             "type_woning":    pref.get("type_woning") or [],
             "telegram_chat_id": pref.get("telegram_chat_id") or "",
+            "radius_km":      pref.get("radius_km"),
             "has_prefs":      bool(pref),
         })
 
@@ -54,6 +55,7 @@ def api_admin_user_put(user_id):
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),
+        "radius_km":        data.get("radius_km") or None,
         "updated_at":       datetime.now(timezone.utc).isoformat(),
     }
 
