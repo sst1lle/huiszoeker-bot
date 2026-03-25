@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Gebruikersbeheer — Huursignal{% endblock %}
+{% block content %}
+<div class="container">
+  <div class="page-head">
+    <h1>Gebruikersbeheer</h1>
+    <p>{{ users|length }} gebruiker(s) geregistreerd</p>
+  </div>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr>
+        <th>Naam</th><th>Stad</th><th>Huurrange</th><th>Types</th><th>Telegram</th><th>Acties</th>
+      </tr></thead>
+      <tbody>
+        {% for u in users %}
+        {% set types = u.type_woning or [] %}
+        {% set user_data = {
+          'uid': u.user_id or '',
+          'naam': u.naam or '',
+          'stad': u.stad or '',
+          'min_prijs': u.min_prijs or 0,
+          'max_prijs': u.max_prijs or 0,
+          'type_woning': types,
+          'telegram_chat_id': u.telegram_chat_id or ''
+        } %}
+        <tr>
+          <td><strong>{{ u.naam or '—' }}</strong></td>
+          <td>{{ u.stad or '—' }}</td>
+          <td>&euro;{{ u.min_prijs or 0 }}&ndash;&euro;{{ u.max_prijs or 0 }}</td>
+          <td style="font-size:13px">
+            {% if types %}{{ types | join(', ') }}{% else %}<span style="color:var(--hint)">alles</span>{% endif %}
+          </td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">{{ u.telegram_chat_id or '—' }}</td>
+          <td>
+            <div class="admin-actions">
+              <button class="btn btn-sm btn-outline"
+                      data-user='{{ user_data | tojson }}'
+                      onclick="openEdit(this)">Bewerken</button>
+              <button class="btn btn-sm btn-danger"
+                      data-uid="{{ u.user_id or '' }}"
+                      data-naam="{{ u.naam or '' }}"
+                      onclick="confirmDelete(this)">Verwijderen</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <h2>Gebruiker bewerken</h2>
+    <input type="hidden" id="edit-uid">
+    <div class="field"><label>Naam</label><input type="text" id="edit-naam"></div>
+    <div class="field"><label>Stad</label><input type="text" id="edit-stad"></div>
+    <div class="row-2">
+      <div class="field"><label>Min. huur</label><input type="number" id="edit-min"></div>
+      <div class="field"><label>Max. huur</label><input type="number" id="edit-max"></div>
+    </div>
+    <div class="field"><label>Telegram chat ID</label><input type="text" id="edit-telegram"></div>
+    <div class="field">
+      <label>Type woning <span style="font-weight:400;color:var(--hint)">(leeg = alles)</span></label>
+      <div class="checks" id="edit-types">
+        {% for t in woning_types %}
+        <label onclick="toggleActive(this)">
+          <input type="checkbox" value="{{ t }}" style="pointer-events:none"> {{ t }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="err" id="edit-err"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" style="width:auto" onclick="closeModal()">Annuleren</button>
+      <button class="btn btn-primary" style="width:auto" onclick="saveEdit()">Opslaan</button>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block nav %}{% endblock %}
+{% block title %}Registreren — Huursignal{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Account aanmaken</h1>
+    <p class="sub">Begin met zoeken naar je nieuwe woning</p>
+    <div class="err" id="err"></div>
+    <div class="field">
+      <label>Naam</label>
+      <input type="text" id="naam" placeholder="Je naam" autocomplete="name">
+    </div>
+    <div class="field">
+      <label>E-mailadres</label>
+      <input type="email" id="email" placeholder="jij@voorbeeld.nl" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Wachtwoord</label>
+      <input type="password" id="pwd" placeholder="Minimaal 6 tekens" autocomplete="new-password">
+    </div>
+    <button class="btn btn-primary" onclick="doRegister()">Account aanmaken</button>
+    <p class="auth-foot">Al een account? <a href="/">Inloggen</a></p>
+  </div>
+</div>
+<script>
+  async function doRegister() {
+    const err = document.getElementById('err');
+    err.style.display = 'none';
+    const r = await fetch('/api/register', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ naam: document.getElementById('naam').value.trim(),
+                             email: document.getElementById('email').value.trim(),
+                             password: document.getElementById('pwd').value })
+    });
+    const d = await r.json();
+    if (d.ok) location.href = '/onboarding';
+    else { err.textContent = d.error || 'Registratie mislukt'; err.style.display = 'block'; }
+  }
+</script>
+{% endblock %}

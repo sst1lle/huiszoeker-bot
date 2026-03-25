@@ -71,18 +71,26 @@ def valideer_listings():
 
 
 def upsert_listing(listing: dict) -> str | None:
-    """Insert nieuwe listing of update beschikbaar=True als hij teruggekomen is. Geeft UUID terug."""
+    """Insert nieuwe listing of update bestaande als hij onvolledig is (migratiestub). Geeft UUID terug."""
     if not listing.get("prijs"):
         return None  # listing zonder prijs is niet bruikbaar voor matching
 
     db = get_db()
 
-    bestaand = db.table("listings").select("id, beschikbaar").eq("url", listing["url"]).execute()
+    bestaand = db.table("listings").select("id, beschikbaar, prijs").eq("url", listing["url"]).execute()
 
     if bestaand.data:
         record = bestaand.data[0]
+        updates = {}
         if not record["beschikbaar"]:
-            db.table("listings").update({"beschikbaar": True}).eq("id", record["id"]).execute()
+            updates["beschikbaar"] = True
+        # Vul ontbrekende velden in — migratiestubs hebben prijs/stad/adres=None
+        if not record.get("prijs"):
+            for field in ("adres", "stad", "prijs", "oppervlakte", "type_woning", "foto_url"):
+                if listing.get(field) is not None:
+                    updates[field] = listing[field]
+        if updates:
+            db.table("listings").update(updates).eq("id", record["id"]).execute()
         return record["id"]
 
     nu = datetime.now(timezone.utc).isoformat()

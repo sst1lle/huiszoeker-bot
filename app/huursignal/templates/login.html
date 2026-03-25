@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block nav %}{% endblock %}
+{% block title %}Inloggen — Huursignal{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Inloggen</h1>
+    <p class="sub">Welkom terug bij Huursignal</p>
+    <div class="err" id="err"></div>
+    <div class="field">
+      <label>E-mailadres</label>
+      <input type="email" id="email" placeholder="jij@voorbeeld.nl" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Wachtwoord</label>
+      <input type="password" id="pwd" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Inloggen</button>
+    <p class="auth-foot">Nog geen account? <a href="/register">Registreren</a> &nbsp;·&nbsp; <a href="/forgot-password">Wachtwoord vergeten</a></p>
+  </div>
+</div>
+<script>
+  document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  async function doLogin() {
+    const err = document.getElementById('err');
+    err.style.display = 'none';
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: document.getElementById('email').value.trim(),
+                             password: document.getElementById('pwd').value })
+    });
+    const d = await r.json();
+    if (d.ok) location.href = '/dashboard';
+    else { err.textContent = d.error || 'Inloggen mislukt'; err.style.display = 'block'; }
+  }
+</script>
+{% endblock %}

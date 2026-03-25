@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Woningen — Huursignal{% endblock %}
+{% block content %}
+<div class="container">
+  <div class="page-head">
+    <h1>Beschikbare woningen</h1>
+    <p>{{ totaal }} woningen gevonden &middot; {{ filter_info }}</p>
+  </div>
+  <div class="grid">
+    {% if listings %}
+      {% for l in listings %}
+      {% set foto = l.foto_url or '' %}
+      {% set adres = l.adres or 'Onbekend adres' %}
+      {% set stad_l = l.stad or '' %}
+      {% set prijs = fmt_prijs(l.prijs) %}
+      {% set opp = l.oppervlakte %}
+      {% set source = l.source or '' %}
+      {% set url = l.url or '#' %}
+      <div class="card">
+        <a href="{{ url }}" target="_blank" rel="noopener">
+          {% if foto %}
+          <img class="card-photo" src="{{ foto }}" alt="" loading="lazy">
+          {% else %}
+          <div class="card-no-photo">🏠</div>
+          {% endif %}
+        </a>
+        <div class="card-body">
+          <div class="card-top">
+            <div class="card-adres">{{ adres }}{% if stad_l %}, {{ stad_l }}{% endif %}</div>
+            <span class="badge {{ 'badge-pararius' if source == 'pararius' else 'badge-kamernet' }}">
+              {{ 'Pararius' if source == 'pararius' else 'Kamernet' }}
+            </span>
+          </div>
+          <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
+          {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}
+          <a href="{{ url }}" target="_blank" rel="noopener" class="card-link">Bekijk woning &rarr;</a>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="empty">
+      <div class="icon">🔍</div>
+      <h2>Nog geen woningen gevonden</h2>
+      <p>De bot zoekt elke 15 minuten. Pas je <a href="/instellingen">voorkeuren</a> aan als je niets verwacht.</p>
+    </div>
+    {% endif %}
+  </div>
+  {% if totaal_paginas > 1 %}
+  <div class="pager">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}">&lsaquo;</a>{% endif %}
+    {% for p in range(1, totaal_paginas + 1) %}
+      {% if p == page %}
+      <span class="cur">{{ p }}</span>
+      {% else %}
+      <a href="?page={{ p }}">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if page < totaal_paginas %}<a href="?page={{ page + 1 }}">&rsaquo;</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

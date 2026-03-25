@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Instellingen — Huursignal{% endblock %}
+{% block content %}
+<div class="form-page">
+  <h1>Instellingen</h1>
+  <p class="sub">Pas je zoekvoorkeuren en gegevens aan.</p>
+  {% set submit_label = "Opslaan" %}
+  {% set redirect_to = "" %}
+  {% include "_pref_form.html" %}
+</div>
+<script src="{{ url_for('static', filename='js/preferences.js') }}"></script>
+{% endblock %}
