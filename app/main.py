@@ -26,16 +26,14 @@ async def stuur_telegram(chat_id: str, bericht: str):
 
 
 async def stuur_warning(bericht: str):
+    chat_id = os.getenv('ADMIN_CHAT_ID', '').strip()
+    if not chat_id:
+        return
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
-    chat_ids = os.getenv('TELEGRAM_CHAT_ID', '').split(',')
-    for chat_id in chat_ids:
-        chat_id = chat_id.strip()
-        if not chat_id:
-            continue
-        try:
-            await bot.send_message(chat_id=chat_id, text=bericht)
-        except Exception as e:
-            print(f"[telegram] Warning fout: {e}", flush=True)
+    try:
+        await bot.send_message(chat_id=chat_id, text=bericht)
+    except Exception as e:
+        print(f"[telegram] Warning fout: {e}", flush=True)
 
 
 def valideer_listings():
