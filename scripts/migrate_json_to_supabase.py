@@ -4,23 +4,23 @@ Migratiescript: JSON-bestanden → Supabase
 Leest data/users/*.json en maakt per gebruiker:
   - Een Supabase Auth account (tijdelijk wachtwoord, te resetten via e-mail)
   - Een rij in user_preferences
+  - sent_notifications voor alle URLs in data/seen/{uid}.json
+    (als minimale listing met beschikbaar=False, zodat de bot ze niet opnieuw stuurt)
 
-Idempotent: als een e-mail al bestaat in Auth, wordt die overgeslagen.
-data/seen/ wordt NIET gemigreerd — fresh start.
+Idempotent: bestaande accounts/preferences/notifications worden overgeslagen.
 
 Gebruik:
-    SUPABASE_URL=... SUPABASE_KEY=... python scripts/migrate_json_to_supabase.py
-
-Of via Docker:
-    docker exec huiszoeker python /app/scripts/migrate_json_to_supabase.py
+    python scripts/migrate_json_to_supabase.py
 """
 
 import os
 import sys
 import json
 import glob
+import re
 import secrets
 import string
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -30,6 +30,7 @@ load_dotenv()
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 USERS_DIR    = os.path.join(os.path.dirname(__file__), "..", "data", "users")
+SEEN_DIR     = os.path.join(os.path.dirname(__file__), "..", "data", "seen")
 
 db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -111,6 +112,101 @@ def migreer_user(uid: str, data: dict) -> bool:
         return False
 
 
+def laad_uid_naar_user_id() -> dict[str, str]:
+    """Bouw een mapping van oud JSON-uid → Supabase user_id op basis van e-mail patroon."""
+    mapping = {}
+    try:
+        users = db.auth.admin.list_users()
+        for user in users:
+            m = re.match(r"^([0-9a-f]+)@migratie\.huursignaal\.local$", user.email or "")
+            if m:
+                mapping[m.group(1)] = user.id
+    except Exception as e:
+        print(f"⚠️  Kon Auth-gebruikers niet ophalen: {e}")
+    return mapping
+
+
+def upsert_minimale_listing(url: str) -> str | None:
+    """Zoek listing op URL of insert een minimale stub met beschikbaar=False."""
+    bestaand = db.table("listings").select("id").eq("url", url).execute()
+    if bestaand.data:
+        return bestaand.data[0]["id"]
+
+    # Leid source en stad af uit de URL
+    source = "pararius" if "pararius" in url else "kamernet"
+    stad = None
+    m = re.search(r"/(appartement|kamer|studio|woning)-te-huur/([^/]+)/", url)
+    if m:
+        stad = m.group(2)
+
+    nu = datetime.now(timezone.utc).isoformat()
+    try:
+        result = db.table("listings").insert({
+            "source":            source,
+            "url":               url,
+            "stad":              stad,
+            "beschikbaar":       False,
+            "eerste_gezien":     nu,
+            "created_at":        nu,
+            "laatst_gevalideerd": nu,
+        }).execute()
+        return result.data[0]["id"] if result.data else None
+    except Exception:
+        return None
+
+
+def migreer_gezien(uid_naar_user_id: dict[str, str]):
+    """Migreer data/seen/*.json naar sent_notifications."""
+    print("\n── Stap 2: seen-URLs migreren ──────────────────────────────")
+
+    bestanden = sorted(glob.glob(os.path.join(SEEN_DIR, "*.json")))
+    if not bestanden:
+        print("Geen seen-bestanden gevonden, overgeslagen.")
+        return
+
+    totaal_notifs = 0
+    totaal_listings = 0
+
+    for pad in bestanden:
+        uid = os.path.basename(pad).replace(".json", "")
+        user_id = uid_naar_user_id.get(uid)
+
+        try:
+            with open(pad) as f:
+                urls = json.load(f)
+        except Exception as e:
+            print(f"  ⚠️  Kan {pad} niet lezen: {e}")
+            continue
+
+        if not user_id:
+            print(f"\n→ {uid}: geen Auth-account gevonden, overgeslagen ({len(urls)} URLs)")
+            continue
+
+        print(f"\n→ {uid[:8]}… ({len(urls)} URLs)")
+
+        notifs = 0
+        for url in urls:
+            url = url.rstrip("/")
+            listing_id = upsert_minimale_listing(url)
+            if not listing_id:
+                continue
+
+            totaal_listings += 1
+            try:
+                db.table("sent_notifications").insert({
+                    "user_id":    user_id,
+                    "listing_id": listing_id,
+                }).execute()
+                notifs += 1
+                totaal_notifs += 1
+            except Exception:
+                pass  # UNIQUE constraint — al aanwezig
+
+        print(f"  ✅ {notifs} sent_notifications aangemaakt")
+
+    print(f"\nTotaal: {totaal_listings} listings, {totaal_notifs} notificaties gemigreerd")
+
+
 def main():
     bestanden = sorted(glob.glob(os.path.join(USERS_DIR, "*.json")))
 
@@ -119,8 +215,7 @@ def main():
         sys.exit(1)
 
     print(f"Huursignaal migratie: {len(bestanden)} gebruikers gevonden\n")
-    print("⚠️  data/seen/ wordt NIET gemigreerd — gebruikers starten fris.")
-    print("─" * 60)
+    print("── Stap 1: gebruikers & voorkeuren ─────────────────────────")
 
     geslaagd = 0
     mislukt  = 0
@@ -141,8 +236,15 @@ def main():
             mislukt += 1
 
     print("\n" + "─" * 60)
-    print(f"✅ Geslaagd: {geslaagd}  |  ❌ Mislukt: {mislukt}")
-    print("\nVolgende stap: laat gebruikers inloggen via de webinterface")
+    print(f"Gebruikers: ✅ {geslaagd}  ❌ {mislukt}")
+
+    # Stap 2: seen-URLs migreren
+    uid_naar_user_id = laad_uid_naar_user_id()
+    migreer_gezien(uid_naar_user_id)
+
+    print("\n" + "─" * 60)
+    print("Migratie klaar.")
+    print("Volgende stap: laat gebruikers inloggen via de webinterface")
     print("en een nieuw wachtwoord instellen via Supabase → Auth → Users.")
 
 
