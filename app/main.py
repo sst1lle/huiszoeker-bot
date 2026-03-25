@@ -1,61 +1,23 @@
 import os
-import json
 import time
 import asyncio
+import requests
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
 
+from db import get_db
 from scrapers.pararius import scrape_pararius
-
-USERS_DIR = '/app/data/users'
-SEEN_DIR = '/app/data/seen'
+from scrapers.kamernet import scrape_kamernet
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 load_dotenv()
 
 INTERVAL = 15 * 60
+VALIDATIE_INTERVAL_UREN = 6
 
 
-def laad_users():
-    users = {}
-    if os.path.exists(USERS_DIR):
-        for f in os.listdir(USERS_DIR):
-            if f.endswith('.json'):
-                uid = f.replace('.json', '')
-                with open(os.path.join(USERS_DIR, f)) as fp:
-                    users[uid] = json.load(fp)
-    return users
-
-
-def laad_gezien(uid):
-    """Laad de links die al naar deze specifieke user gestuurd zijn."""
-    os.makedirs(SEEN_DIR, exist_ok=True)
-    path = os.path.join(SEEN_DIR, f'{uid}.json')
-    if os.path.exists(path):
-        with open(path) as f:
-            return set(json.load(f))
-    return set()
-
-
-def sla_gezien_op(uid, gezien):
-    """Sla de geziene links op voor deze specifieke user."""
-    os.makedirs(SEEN_DIR, exist_ok=True)
-    path = os.path.join(SEEN_DIR, f'{uid}.json')
-    with open(path, 'w') as f:
-        json.dump(list(gezien), f)
-
-
-def check_nieuw_voor_user(woningen, gezien):
-    nieuw = []
-    for w in woningen:
-        link = w['link'].rstrip('/')
-        if link not in gezien:
-            nieuw.append(w)
-            gezien.add(link)
-    return nieuw, gezien
-
-
-async def stuur_telegram(chat_id, bericht):
+async def stuur_telegram(chat_id: str, bericht: str):
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     try:
         await bot.send_message(chat_id=chat_id, text=bericht)
@@ -63,7 +25,7 @@ async def stuur_telegram(chat_id, bericht):
         print(f"[telegram] Fout voor {chat_id}: {e}", flush=True)
 
 
-async def stuur_warning(bericht):
+async def stuur_warning(bericht: str):
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     chat_ids = os.getenv('TELEGRAM_CHAT_ID', '').split(',')
     for chat_id in chat_ids:
@@ -76,78 +38,233 @@ async def stuur_warning(bericht):
             print(f"[telegram] Warning fout: {e}", flush=True)
 
 
+def valideer_listings():
+    """Check listings die lang niet gevalideerd zijn. Markeert 404's als beschikbaar=False."""
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=VALIDATIE_INTERVAL_UREN)).isoformat()
+
+    result = db.table("listings").select("id, url").eq("beschikbaar", True).lt("laatst_gevalideerd", cutoff).execute()
+    listings = result.data or []
+
+    if not listings:
+        return 0, 0
+
+    print(f"[validatie] {len(listings)} listings te valideren", flush=True)
+    vervallen = 0
+    nu = datetime.now(timezone.utc).isoformat()
+
+    for listing in listings:
+        try:
+            r = requests.get(listing["url"], timeout=10, allow_redirects=True, stream=True,
+                             headers={"User-Agent": "Mozilla/5.0"})
+            beschikbaar = r.status_code != 404
+        except Exception:
+            beschikbaar = True  # netwerk fout: niet als vervallen markeren
+
+        update = {"laatst_gevalideerd": nu}
+        if not beschikbaar:
+            update["beschikbaar"] = False
+            vervallen += 1
+
+        db.table("listings").update(update).eq("id", listing["id"]).execute()
+
+    print(f"[validatie] {vervallen} vervallen, {len(listings) - vervallen} nog online", flush=True)
+    return len(listings), vervallen
+
+
+def upsert_listing(listing: dict) -> str | None:
+    """Insert nieuwe listing of update beschikbaar=True als hij teruggekomen is. Geeft UUID terug."""
+    if not listing.get("prijs"):
+        return None  # listing zonder prijs is niet bruikbaar voor matching
+
+    db = get_db()
+
+    bestaand = db.table("listings").select("id, beschikbaar").eq("url", listing["url"]).execute()
+
+    if bestaand.data:
+        record = bestaand.data[0]
+        if not record["beschikbaar"]:
+            db.table("listings").update({"beschikbaar": True}).eq("id", record["id"]).execute()
+        return record["id"]
+
+    nu = datetime.now(timezone.utc).isoformat()
+    nieuw = {**listing, "eerste_gezien": nu, "created_at": nu, "laatst_gevalideerd": nu}
+    result = db.table("listings").insert(nieuw).execute()
+    return result.data[0]["id"] if result.data else None
+
+
+def zoek_nieuwe_voor_user(pref: dict) -> list[dict]:
+    """Haal listings op die matchen met de voorkeur en nog niet verstuurd zijn."""
+    db = get_db()
+    user_id = pref.get("user_id")
+    stad = pref.get("stad", "")
+    min_prijs = pref.get("min_prijs") or 0
+    max_prijs = pref.get("max_prijs") or 9999
+    types = pref.get("type_woning") or []
+
+    # Al-verstuurde listing IDs voor deze user
+    sent = db.table("sent_notifications").select("listing_id").eq("user_id", user_id).execute()
+    al_gestuurd = {row["listing_id"] for row in (sent.data or [])}
+
+    # Listings ophalen op stad + prijsrange
+    listings = (db.table("listings")
+                .select("*")
+                .eq("stad", stad)
+                .eq("beschikbaar", True)
+                .gte("prijs", min_prijs)
+                .lte("prijs", max_prijs)
+                .execute()
+                .data or [])
+
+    nieuw = []
+    for listing in listings:
+        if listing["id"] in al_gestuurd:
+            continue
+        listing_type = listing.get("type_woning")
+        # type_woning=None (Pararius) matcht altijd; anders moet het in de voorkeur staan
+        if listing_type and types and listing_type not in types:
+            continue
+        nieuw.append(listing)
+
+    return nieuw
+
+
+def maak_bericht(listing: dict) -> str:
+    adres = listing.get("adres") or "Onbekend adres"
+    stad = listing.get("stad") or ""
+    prijs = listing.get("prijs")
+    oppervlakte = listing.get("oppervlakte")
+    type_woning = listing.get("type_woning")
+    url = listing.get("url", "")
+
+    regels = ["🏠 Nieuwe woning gevonden!\n"]
+    regels.append(f"📍 {adres}{', ' + stad if stad else ''}")
+    if prijs:
+        regels.append(f"💶 €{prijs}/maand")
+    if oppervlakte:
+        regels.append(f"📐 {oppervlakte}m²")
+    if type_woning:
+        regels.append(f"🏷️ {type_woning}")
+    regels.append(f"\n🔗 {url}")
+
+    return "\n".join(regels)
+
+
+async def verwerk_notificaties(prefs: list[dict]) -> int:
+    db = get_db()
+    gestuurd = 0
+
+    for pref in prefs:
+        user_id = pref.get("user_id")
+        chat_id = (pref.get("telegram_chat_id") or "").strip()
+        naam = pref.get("naam") or user_id
+
+        if not chat_id or not user_id:
+            continue
+
+        nieuwe_listings = zoek_nieuwe_voor_user(pref)
+
+        for listing in nieuwe_listings:
+            await stuur_telegram(chat_id, maak_bericht(listing))
+            try:
+                db.table("sent_notifications").insert({
+                    "user_id": user_id,
+                    "listing_id": listing["id"]
+                }).execute()
+            except Exception:
+                pass  # UNIQUE constraint — dubbel versturen is onmogelijk
+            gestuurd += 1
+            print(f"[notificaties] → {naam}: {listing.get('url')}", flush=True)
+
+    return gestuurd
+
+
 if __name__ == '__main__':
     print("🏠 Huiszoekerbot gestart", flush=True)
 
     while True:
         try:
-            users = laad_users()
+            # ── 1. VALIDATIE ──────────────────────────────────────────────────
+            gecheckt, vervallen = valideer_listings()
 
-            if not users:
+            # ── 2. SCRAPEN ────────────────────────────────────────────────────
+            db = get_db()
+            prefs = db.table("user_preferences").select("*").execute().data or []
+
+            if not prefs:
                 print("[main] Geen gebruikers gevonden, wacht...", flush=True)
                 time.sleep(INTERVAL)
                 continue
 
-            print(f"[main] {len(users)} gebruiker(s) actief", flush=True)
+            print(f"[main] {len(prefs)} gebruiker(s) actief", flush=True)
 
-            # Cache scrape resultaten per stad+prijs combinatie
-            scraped = {}
+            # Dedupliceer scrape-combinaties: elke unieke stad+prijs slechts één keer scrapen
+            pararius_combis: dict[str, dict] = {}
+            kamernet_combis: dict[str, dict] = {}
 
-            for uid, user in users.items():
-                naam = user.get('naam', uid)
-                stad = user.get('stad', 'den-haag')
-                min_prijs = user.get('min_prijs', 0)
-                max_prijs = user.get('max_prijs', 1500)
-                chat_id = user.get('telegram_chat_id', '').strip()
+            for pref in prefs:
+                stad = (pref.get("stad") or "").strip()
+                min_p = pref.get("min_prijs") or 0
+                max_p = pref.get("max_prijs") or 1500
+                types = pref.get("type_woning") or []
 
-                if not chat_id:
-                    print(f"[main] {naam}: geen chat_id ingesteld, sla over", flush=True)
-                    continue
+                p_key = f"{stad}-{min_p}-{max_p}"
+                if p_key not in pararius_combis:
+                    pararius_combis[p_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p}
 
-                # Scrape alleen als deze combinatie nog niet gedaan is
-                scrape_key = f"{stad}-{min_prijs}-{max_prijs}"
-                if scrape_key not in scraped:
-                    woningen = scrape_pararius(stad=stad, min_prijs=min_prijs, max_prijs=max_prijs)
-                    scraped[scrape_key] = woningen
-                    print(f"[main] {naam}: {len(woningen)} woningen gevonden voor {stad} €{min_prijs}-€{max_prijs}", flush=True)
+                k_key = f"{stad}-{min_p}-{max_p}-{','.join(sorted(types))}"
+                if k_key not in kamernet_combis:
+                    kamernet_combis[k_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "types": types}
 
-                    if len(woningen) == 0:
-                        asyncio.run(stuur_warning(
-                            f"⚠️ Pararius gaf 0 resultaten!\n"
-                            f"Stad: {stad}, Prijs: €{min_prijs}-€{max_prijs}"
-                        ))
-                else:
-                    woningen = scraped[scrape_key]
-                    print(f"[main] {naam}: hergebruik scrape ({len(woningen)} woningen)", flush=True)
+            totaal = 0
 
-                # Check welke woningen nieuw zijn voor DEZE specifieke user
-                gezien = laad_gezien(uid)
-                nieuw, gezien_updated = check_nieuw_voor_user(woningen, gezien)
+            for params in pararius_combis.values():
+                woningen = scrape_pararius(
+                    stad=params["stad"],
+                    min_prijs=params["min_prijs"],
+                    max_prijs=params["max_prijs"]
+                )
+                if not woningen:
+                    asyncio.run(stuur_warning(
+                        f"⚠️ Pararius gaf 0 resultaten!\n"
+                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}"
+                    ))
+                for w in woningen:
+                    upsert_listing(w)
+                    totaal += 1
 
-                if nieuw:
-                    for w in nieuw:
-                        bericht = (
-                            f"🏠 Nieuwe woning voor {naam}!\n"
-                            f"{w['titel']}\n"
-                            f"{w['prijs']}\n"
-                            f"📍 {stad}\n"
-                            f"{w['link']}"
-                        )
-                        asyncio.run(stuur_telegram(chat_id, bericht))
+            for params in kamernet_combis.values():
+                woningen = scrape_kamernet(
+                    stad=params["stad"],
+                    min_prijs=params["min_prijs"],
+                    max_prijs=params["max_prijs"],
+                    types=params["types"]
+                )
+                for w in woningen:
+                    upsert_listing(w)
+                    totaal += 1
 
-                    # Sla geziene links op voor deze user
-                    sla_gezien_op(uid, gezien_updated)
-                    print(f"[main] {naam}: {len(nieuw)} nieuw verstuurd", flush=True)
-                else:
-                    print(f"[main] {naam}: geen nieuwe woningen", flush=True)
+            print(f"[main] {totaal} listings verwerkt", flush=True)
 
-            print(f"[main] ✅ Loop klaar, volgende check over 15 minuten...", flush=True)
+            # ── 3. NOTIFICATIES ───────────────────────────────────────────────
+            gestuurd = asyncio.run(verwerk_notificaties(prefs))
+
+            # ── 4. LOGGING ────────────────────────────────────────────────────
+            print(
+                f"[main] ✅ Loop klaar — "
+                f"gevalideerd: {gecheckt}, vervallen: {vervallen}, "
+                f"gevonden: {totaal}, notificaties: {gestuurd}. "
+                f"Volgende check over 15 minuten...",
+                flush=True
+            )
 
         except Exception as e:
             print(f"[main] ❌ Fout in loop: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             try:
                 asyncio.run(stuur_warning(f"❌ Huiszoekerbot fout:\n{e}"))
-            except:
+            except Exception:
                 pass
 
         time.sleep(INTERVAL)
