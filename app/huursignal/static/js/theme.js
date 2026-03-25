@@ -1,7 +1,3 @@
-function toggleNav() {
-  document.getElementById('navLinks').classList.toggle('open');
-}
-
 function toggleTheme() {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);

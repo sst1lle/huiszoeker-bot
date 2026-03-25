@@ -12,7 +12,9 @@
 <nav>
   <div class="nav-inner">
     <a href="/dashboard" class="logo">Huur<span>signal</span></a>
-    <button class="hamburger" id="hamburger" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+    <button class="hamburger" id="hamburger" onclick="toggleNav()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
     <div class="nav-links" id="navLinks">
       <a href="/dashboard">Woningen</a>
       <a href="/instellingen">Instellingen</a>
@@ -22,6 +24,11 @@
     </div>
   </div>
 </nav>
+<script>
+  function toggleNav() {
+    document.getElementById('navLinks').classList.toggle('open');
+  }
+</script>
 <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
 {% endblock %}
 {% block content %}{% endblock %}
