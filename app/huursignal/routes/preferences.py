@@ -5,7 +5,7 @@ from flask import Blueprint, session, redirect, url_for, request, jsonify, rende
 
 from db import get_db
 from ..decorators import login_required
-from ..helpers import WONING_TYPES
+from ..helpers import WONING_TYPES, get_bot_username
 
 pref_bp = Blueprint("pref", __name__)
 
@@ -14,7 +14,8 @@ pref_bp = Blueprint("pref", __name__)
 @login_required
 def onboarding():
     naam = session.pop("naam", "")
-    return render_template("onboarding.html", pref={"naam": naam}, woning_types=WONING_TYPES)
+    return render_template("onboarding.html", pref={"naam": naam}, woning_types=WONING_TYPES,
+                           bot_username=get_bot_username())
 
 
 @pref_bp.route("/instellingen")
@@ -23,7 +24,8 @@ def instellingen():
     db = get_db()
     result = db.table("user_preferences").select("*").eq("user_id", session["user_id"]).execute()
     pref = result.data[0] if result.data else {}
-    return render_template("instellingen.html", pref=pref, woning_types=WONING_TYPES)
+    return render_template("instellingen.html", pref=pref, woning_types=WONING_TYPES,
+                           bot_username=get_bot_username())
 
 
 @pref_bp.route("/api/preferences", methods=["POST"])
@@ -61,17 +63,7 @@ def onboarding_validate():
     result = db.table("user_preferences").select("telegram_chat_id").eq("user_id", session["user_id"]).execute()
     chat_id = result.data[0].get("telegram_chat_id") if result.data else None
 
-    bot_username = None
-    token = os.environ.get("TELEGRAM_TOKEN", "")
-    if token:
-        try:
-            r = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
-            if r.ok:
-                bot_username = r.json().get("result", {}).get("username")
-        except Exception:
-            pass
-
-    return render_template("onboarding_validate.html", chat_id=chat_id, bot_username=bot_username)
+    return render_template("onboarding_validate.html", chat_id=chat_id, bot_username=get_bot_username())
 
 
 @pref_bp.route("/api/telegram/validate", methods=["POST"])

@@ -8,15 +8,17 @@
   </div>
   <div class="field">
     <label>Telegram chat ID <span style="font-weight:400;color:#a1a1aa">(optioneel)</span></label>
-    <div style="display:flex;gap:8px">
-      <input type="text" id="telegram" value="{{ pref.telegram_chat_id or '' }}" placeholder="bijv. 1234567890" style="flex:1">
-      <button type="button" class="btn btn-outline btn-sm" onclick="testTelegram()" style="white-space:nowrap">Test</button>
-    </div>
+    <input type="text" id="telegram" value="{{ pref.telegram_chat_id or '' }}" placeholder="bijv. 1234567890">
     <p class="hint">
       <strong>Stap 1:</strong> Stuur <code>/start</code> naar <a href="https://t.me/userinfobot" target="_blank" style="color:#2563eb">@userinfobot</a> — die stuurt je chat ID terug.<br>
-      <strong>Stap 2:</strong> Stuur <code>/start</code> naar onze bot (zie validatie hieronder) zodat die jou berichten mag sturen.
+      <strong>Stap 2:</strong> Stuur <code>/start</code> naar
+      {% if bot_username %}
+        <a href="https://t.me/{{ bot_username }}" target="_blank" style="color:#2563eb">@{{ bot_username }}</a>
+      {% else %}
+        onze bot
+      {% endif %}
+      zodat die jou berichten mag sturen.
     </p>
-    <div id="telegram-status" style="margin-top:6px;font-size:13px;display:none"></div>
   </div>
   <p class="section-label">Zoekvoorkeuren</p>
   <div class="field">
