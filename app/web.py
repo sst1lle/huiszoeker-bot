@@ -3,12 +3,14 @@ import functools
 from datetime import datetime, timezone
 from flask import Flask, render_template_string, redirect, url_for, request, session, jsonify
 from dotenv import load_dotenv
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import get_db
 
 load_dotenv()
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("SECRET_KEY", "changeme")
 
 WONING_TYPES = ["kamer", "appartement", "studio", "anti-kraak", "studentenwoning", "gemeubileerd"]
@@ -300,7 +302,7 @@ def api_logout():
     return jsonify({"ok": True})
 
 
-@app.route("/reset-password")
+@app.route("/reset-password", strict_slashes=False)
 def reset_password():
     body = """
 <div class="auth-wrap">
