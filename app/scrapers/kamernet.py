@@ -159,9 +159,9 @@ def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str])
     gemeubileerd_filter = "gemeubileerd" in types
     scrape_types = [t for t in types if t != "gemeubileerd"]
 
-    # Als alleen 'gemeubileerd' geselecteerd is, gebruik appartementen als basis
+    # Geen filter ingesteld → standaard appartement, studio, anti-kraak
     if not scrape_types:
-        scrape_types = ["appartement"]
+        scrape_types = ["appartement", "studio", "anti-kraak"]
 
     urls_to_scrape = []
     for type_woning in scrape_types:
