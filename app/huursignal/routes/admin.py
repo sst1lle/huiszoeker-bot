@@ -12,7 +12,31 @@ admin_bp = Blueprint("admin", __name__)
 @admin_required
 def admin_page():
     db = get_db()
-    users = db.table("user_preferences").select("*").order("naam").execute().data or []
+
+    # Alle auth-gebruikers ophalen (inclusief zonder voorkeuren)
+    auth_users = db.auth.admin.list_users()
+
+    # Voorkeuren indexeren op user_id
+    prefs = db.table("user_preferences").select("*").execute().data or []
+    prefs_by_uid = {p["user_id"]: p for p in prefs}
+
+    users = []
+    for u in auth_users:
+        pref = prefs_by_uid.get(u.id, {})
+        users.append({
+            "user_id":        u.id,
+            "email":          u.email or "",
+            "naam":           pref.get("naam") or "",
+            "stad":           pref.get("stad") or "",
+            "min_prijs":      pref.get("min_prijs") or 0,
+            "max_prijs":      pref.get("max_prijs") or 0,
+            "type_woning":    pref.get("type_woning") or [],
+            "telegram_chat_id": pref.get("telegram_chat_id") or "",
+            "has_prefs":      bool(pref),
+        })
+
+    users.sort(key=lambda u: (u["naam"] or u["email"]).lower())
+
     return render_template("admin.html", users=users, woning_types=WONING_TYPES)
 
 
@@ -21,15 +45,28 @@ def admin_page():
 def api_admin_user_put(user_id):
     data = request.json or {}
     db = get_db()
-    db.table("user_preferences").update({
+
+    pref_data = {
+        "user_id":          user_id,
         "naam":             data.get("naam"),
         "telegram_chat_id": data.get("telegram_chat_id"),
-        "stad":             data.get("stad"),
+        "stad":             data.get("stad") or "",
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),
         "updated_at":       datetime.now(timezone.utc).isoformat(),
-    }).eq("user_id", user_id).execute()
+    }
+
+    email = data.get("email", "").strip()
+    if email:
+        db.auth.admin.update_user_by_id(user_id, {"email": email})
+
+    existing = db.table("user_preferences").select("id").eq("user_id", user_id).execute()
+    if existing.data:
+        db.table("user_preferences").update(pref_data).eq("user_id", user_id).execute()
+    else:
+        db.table("user_preferences").insert(pref_data).execute()
+
     return jsonify({"ok": True})
 
 
@@ -37,5 +74,5 @@ def api_admin_user_put(user_id):
 @admin_required
 def api_admin_user_delete(user_id):
     db = get_db()
-    db.table("user_preferences").delete().eq("user_id", user_id).execute()
+    db.auth.admin.delete_user(user_id)  # cascades naar user_preferences en sent_notifications
     return jsonify({"ok": True})

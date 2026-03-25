@@ -137,10 +137,20 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
 .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 
+.hamburger { display: none; background: none; border: 1px solid var(--border); border-radius: 6px;
+             padding: 5px 10px; cursor: pointer; font-size: 18px; color: var(--text); }
+
 @media (max-width: 600px) {
   .grid { grid-template-columns: 1fr; }
   .row-2 { grid-template-columns: 1fr; }
   .auth-card { padding: 24px 20px; }
   .form-actions { flex-direction: column; }
-  .nav-links a:not(.btn-nav) { display: none; }
+
+  .hamburger { display: flex; }
+  .nav-links { display: none; flex-direction: column; position: absolute; top: 56px; left: 0; right: 0;
+               background: var(--surface); border-bottom: 1px solid var(--border);
+               padding: 8px 16px 12px; gap: 2px; z-index: 20; }
+  .nav-links.open { display: flex; }
+  .nav-links a, .nav-links button { width: 100%; text-align: left; padding: 10px 12px; }
+  .nav-links .btn-nav { margin-top: 4px; justify-content: center; }
 }

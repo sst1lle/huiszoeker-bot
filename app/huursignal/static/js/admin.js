@@ -9,8 +9,9 @@ function closeModal() {
 function openEdit(btn) {
   const u = JSON.parse(btn.dataset.user);
   document.getElementById('edit-uid').value      = u.uid;
+  document.getElementById('edit-email').value    = u.email;
   document.getElementById('edit-naam').value     = u.naam;
-  document.getElementById('edit-stad').value     = u.stad === '—' ? '' : u.stad;
+  document.getElementById('edit-stad').value     = u.stad || '';
   document.getElementById('edit-min').value      = u.min_prijs;
   document.getElementById('edit-max').value      = u.max_prijs;
   document.getElementById('edit-telegram').value = u.telegram_chat_id;
@@ -26,6 +27,7 @@ async function saveEdit() {
   const uid   = document.getElementById('edit-uid').value;
   const types = [...document.querySelectorAll('#edit-types input:checked')].map(x => x.value);
   const body  = {
+    email:            document.getElementById('edit-email').value.trim(),
     naam:             document.getElementById('edit-naam').value.trim(),
     stad:             document.getElementById('edit-stad').value.trim().toLowerCase().replace(/ /g, '-'),
     min_prijs:        parseInt(document.getElementById('edit-min').value) || 0,
@@ -49,7 +51,7 @@ async function saveEdit() {
 
 async function confirmDelete(btn) {
   const naam = btn.dataset.naam || 'deze gebruiker';
-  if (!confirm(`Voorkeuren van ${naam} verwijderen? Het account blijft bestaan.`)) return;
+  if (!confirm(`Account van ${naam} permanent verwijderen? Dit verwijdert ook alle voorkeuren en notificaties.`)) return;
   const r = await fetch(`/api/admin/users/${btn.dataset.uid}`, { method: 'DELETE' });
   const d = await r.json();
   if (d.ok) location.reload();

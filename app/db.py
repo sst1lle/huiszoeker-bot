@@ -12,3 +12,10 @@ def get_db() -> Client:
     if _client is None:
         _client = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _client
+
+
+def new_auth_client() -> Client:
+    """Fresh client per auth-operatie (login/register/reset).
+    Voorkomt dat sign_in_with_password de singleton-client contamineert
+    met een user JWT, waarna RLS de data-queries zou beperken."""
+    return create_client(SUPABASE_URL, SUPABASE_KEY)

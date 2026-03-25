@@ -2,7 +2,7 @@ import os
 import requests as req
 from flask import Blueprint, session, redirect, url_for, request, jsonify, render_template
 
-from db import get_db
+from db import new_auth_client
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -25,8 +25,9 @@ def register():
 def api_login():
     data = request.json or {}
     try:
-        db = get_db()
-        result = db.auth.sign_in_with_password({"email": data["email"], "password": data["password"]})
+        result = new_auth_client().auth.sign_in_with_password(
+            {"email": data["email"], "password": data["password"]}
+        )
         session["user_id"] = result.user.id
         admin_email = os.environ.get("ADMIN_EMAIL", "").strip()
         if admin_email and result.user.email == admin_email:
@@ -40,8 +41,9 @@ def api_login():
 def api_register():
     data = request.json or {}
     try:
-        db = get_db()
-        result = db.auth.sign_up({"email": data["email"], "password": data["password"]})
+        result = new_auth_client().auth.sign_up(
+            {"email": data["email"], "password": data["password"]}
+        )
         if result.user:
             session["user_id"] = result.user.id
             session["naam"] = data.get("naam", "")
@@ -97,9 +99,9 @@ def api_reset_password():
     if not access_token or not password:
         return jsonify({"ok": False, "error": "Ongeldige aanvraag"}), 400
     try:
-        db = get_db()
-        db.auth.set_session(access_token, refresh_token)
-        db.auth.update_user({"password": password})
+        client = new_auth_client()
+        client.auth.set_session(access_token, refresh_token)
+        client.auth.update_user({"password": password})
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400

@@ -9,24 +9,29 @@
   <div class="admin-table-wrap">
     <table class="admin-table">
       <thead><tr>
-        <th>Naam</th><th>Stad</th><th>Huurrange</th><th>Types</th><th>Telegram</th><th>Acties</th>
+        <th>Naam</th><th>E-mail</th><th>Stad</th><th>Huurrange</th><th>Types</th><th>Telegram</th><th>Acties</th>
       </tr></thead>
       <tbody>
         {% for u in users %}
         {% set types = u.type_woning or [] %}
         {% set user_data = {
-          'uid': u.user_id or '',
-          'naam': u.naam or '',
-          'stad': u.stad or '',
-          'min_prijs': u.min_prijs or 0,
-          'max_prijs': u.max_prijs or 0,
+          'uid': u.user_id,
+          'email': u.email,
+          'naam': u.naam,
+          'stad': u.stad,
+          'min_prijs': u.min_prijs,
+          'max_prijs': u.max_prijs,
           'type_woning': types,
-          'telegram_chat_id': u.telegram_chat_id or ''
+          'telegram_chat_id': u.telegram_chat_id
         } %}
         <tr>
           <td><strong>{{ u.naam or '—' }}</strong></td>
-          <td>{{ u.stad or '—' }}</td>
-          <td>&euro;{{ u.min_prijs or 0 }}&ndash;&euro;{{ u.max_prijs or 0 }}</td>
+          <td style="font-size:13px;color:var(--muted)">{{ u.email }}</td>
+          <td>
+            {% if not u.has_prefs %}<span style="color:var(--hint);font-size:12px">geen prefs</span>
+            {% else %}{{ u.stad or '—' }}{% endif %}
+          </td>
+          <td>{% if u.has_prefs %}&euro;{{ u.min_prijs }}&ndash;&euro;{{ u.max_prijs }}{% else %}—{% endif %}</td>
           <td style="font-size:13px">
             {% if types %}{{ types | join(', ') }}{% else %}<span style="color:var(--hint)">alles</span>{% endif %}
           </td>
@@ -37,8 +42,8 @@
                       data-user='{{ user_data | tojson }}'
                       onclick="openEdit(this)">Bewerken</button>
               <button class="btn btn-sm btn-danger"
-                      data-uid="{{ u.user_id or '' }}"
-                      data-naam="{{ u.naam or '' }}"
+                      data-uid="{{ u.user_id }}"
+                      data-naam="{{ u.naam or u.email }}"
                       onclick="confirmDelete(this)">Verwijderen</button>
             </div>
           </td>
@@ -53,6 +58,10 @@
   <div class="modal">
     <h2>Gebruiker bewerken</h2>
     <input type="hidden" id="edit-uid">
+    <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="edit-email" placeholder="gebruiker@voorbeeld.nl" autocomplete="off">
+    </div>
     <div class="field"><label>Naam</label><input type="text" id="edit-naam"></div>
     <div class="field"><label>Stad</label><input type="text" id="edit-stad"></div>
     <div class="row-2">

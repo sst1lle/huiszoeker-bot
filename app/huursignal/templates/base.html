@@ -12,7 +12,8 @@
 <nav>
   <div class="nav-inner">
     <a href="/dashboard" class="logo">Huur<span>signal</span></a>
-    <div class="nav-links">
+    <button class="hamburger" id="hamburger" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+    <div class="nav-links" id="navLinks">
       <a href="/dashboard">Woningen</a>
       <a href="/instellingen">Instellingen</a>
       {% if session.is_admin %}<a href="/admin">Admin</a>{% endif %}
