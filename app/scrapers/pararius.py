@@ -36,7 +36,7 @@ def _extract_oppervlakte(item) -> int | None:
 
 def _check_beschikbaar(item) -> bool:
     text = item.get_text(" ", strip=True).lower()
-    if any(x in text for x in ["verhuurd", "onder optie", "rented", "option"]):
+    if any(x in text for x in ["verhuurd", "onder optie", "onder bod", "rented", "option", "under offer"]):
         return False
     return True
 

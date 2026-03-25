@@ -81,16 +81,15 @@ def upsert_listing(listing: dict) -> str | None:
 
     if bestaand.data:
         record = bestaand.data[0]
-        updates = {}
-        if not record["beschikbaar"]:
-            updates["beschikbaar"] = True
+        nu = datetime.now(timezone.utc).isoformat()
+        scrape_beschikbaar = listing.get("beschikbaar", True)
+        updates = {"laatst_gevalideerd": nu, "beschikbaar": scrape_beschikbaar}
         # Vul ontbrekende velden in — migratiestubs hebben prijs/stad/adres=None
         if not record.get("prijs"):
             for field in ("adres", "stad", "prijs", "oppervlakte", "type_woning", "foto_url"):
                 if listing.get(field) is not None:
                     updates[field] = listing[field]
-        if updates:
-            db.table("listings").update(updates).eq("id", record["id"]).execute()
+        db.table("listings").update(updates).eq("id", record["id"]).execute()
         return record["id"]
 
     nu = datetime.now(timezone.utc).isoformat()
