@@ -174,7 +174,7 @@ def _page(title, body, nav=True):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title} \u2014 Huursignaal</title>
+  <title>{title} \u2014 Huursignal</title>
   <style>{_CSS}</style>
 </head>
 <body>
@@ -194,7 +194,7 @@ def login():
 <div class="auth-wrap">
   <div class="auth-card">
     <h1>Inloggen</h1>
-    <p class="sub">Welkom terug bij Huursignaal</p>
+    <p class="sub">Welkom terug bij Huursignal</p>
     <div class="err" id="err"></div>
     <div class="field">
       <label>E-mailadres</label>
