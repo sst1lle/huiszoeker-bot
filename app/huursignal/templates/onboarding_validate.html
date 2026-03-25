@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Telegram valideren — Huursignal{% endblock %}
+{% block content %}
+<div class="form-page">
+  <h1>Telegram verbinding testen</h1>
+  <p class="sub">Bevestig dat onze bot jou berichten mag sturen in Telegram.</p>
+
+  <div class="form-card">
+    {% if chat_id %}
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        Chat ID: <strong style="font-family:monospace;color:var(--text)">{{ chat_id }}</strong>
+      </p>
+
+      <div style="background:var(--check-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:14px;line-height:1.6">
+        {% if bot_username %}
+          <strong>Heb je al /start gestuurd?</strong><br>
+          Stuur <code>/start</code> naar
+          <a href="https://t.me/{{ bot_username }}" target="_blank" style="color:#2563eb">@{{ bot_username }}</a>
+          in Telegram als je dat nog niet gedaan hebt. Zonder dit kan de bot je geen berichten sturen.
+        {% else %}
+          <strong>Heb je al /start gestuurd?</strong><br>
+          Stuur <code>/start</code> naar onze Telegram-bot als je dat nog niet gedaan hebt. Zonder dit kan de bot je geen berichten sturen.
+        {% endif %}
+      </div>
+
+      <div id="status" style="border-radius:7px;padding:10px 14px;font-size:13px;margin-bottom:16px;display:none"></div>
+
+      <div class="form-actions">
+        <button class="btn btn-primary" style="width:auto" id="test-btn" onclick="doValidate()">Stuur testbericht</button>
+        <a href="/dashboard" class="btn btn-outline">Doorgaan naar dashboard</a>
+      </div>
+
+    {% else %}
+      <p style="font-size:14px;color:var(--muted);margin-bottom:20px">
+        Je hebt nog geen Telegram chat ID ingesteld.
+        <a href="/onboarding" style="color:#2563eb">Ga terug</a> om dit in te stellen.
+      </p>
+      <a href="/dashboard" class="btn btn-outline" style="width:auto">Doorgaan zonder Telegram</a>
+    {% endif %}
+  </div>
+</div>
+<script>
+async function doValidate() {
+  const btn = document.getElementById('test-btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  btn.textContent = 'Bezig…';
+  status.style.display = 'none';
+
+  const r = await fetch('/api/telegram/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const d = await r.json();
+
+  status.style.display = 'block';
+  if (d.ok) {
+    status.style.cssText = 'display:block;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:7px;padding:10px 14px;font-size:13px;margin-bottom:16px';
+    status.textContent = '✅ Setup correct! Je hebt een testbericht ontvangen in Telegram.';
+    btn.textContent = 'Opnieuw testen';
+  } else {
+    status.style.cssText = 'display:block;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:7px;padding:10px 14px;font-size:13px;margin-bottom:16px';
+    status.textContent = '❌ ' + (d.error || 'Versturen mislukt. Heb je /start gestuurd naar de bot?');
+    btn.textContent = 'Opnieuw proberen';
+  }
+  btn.disabled = false;
+}
+</script>
+{% endblock %}

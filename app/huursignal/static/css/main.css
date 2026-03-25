@@ -149,9 +149,9 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
   .form-actions { flex-direction: column; }
 
   .hamburger { display: flex; }
-  .nav-links { display: none; flex-direction: column; position: absolute; top: 56px; left: 0; right: 0;
+  .nav-links { display: none; flex-direction: column; position: fixed; top: 56px; left: 0; right: 0;
                background: var(--surface); border-bottom: 1px solid var(--border);
-               padding: 8px 16px 12px; gap: 2px; z-index: 20; }
+               padding: 8px 16px 12px; gap: 2px; z-index: 200; }
   .nav-links.open { display: flex; }
   .nav-links a, .nav-links button { width: 100%; text-align: left; padding: 10px 12px; }
   .nav-links .btn-nav { margin-top: 4px; justify-content: center; }

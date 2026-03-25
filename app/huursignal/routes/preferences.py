@@ -1,3 +1,5 @@
+import os
+import requests as req
 from datetime import datetime, timezone
 from flask import Blueprint, session, redirect, url_for, request, jsonify, render_template
 
@@ -50,3 +52,57 @@ def api_preferences():
         db.table("user_preferences").insert(pref_data).execute()
 
     return jsonify({"ok": True})
+
+
+@pref_bp.route("/onboarding/validate")
+@login_required
+def onboarding_validate():
+    db = get_db()
+    result = db.table("user_preferences").select("telegram_chat_id").eq("user_id", session["user_id"]).execute()
+    chat_id = result.data[0].get("telegram_chat_id") if result.data else None
+
+    bot_username = None
+    token = os.environ.get("TELEGRAM_TOKEN", "")
+    if token:
+        try:
+            r = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+            if r.ok:
+                bot_username = r.json().get("result", {}).get("username")
+        except Exception:
+            pass
+
+    return render_template("onboarding_validate.html", chat_id=chat_id, bot_username=bot_username)
+
+
+@pref_bp.route("/api/telegram/validate", methods=["POST"])
+@login_required
+def api_telegram_validate():
+    data = request.json or {}
+
+    # Gebruik meegegeven chat_id (inline test vanuit form), anders lees uit DB
+    chat_id = (data.get("chat_id") or "").strip()
+    if not chat_id:
+        db = get_db()
+        result = db.table("user_preferences").select("telegram_chat_id").eq("user_id", session["user_id"]).execute()
+        chat_id = (result.data[0].get("telegram_chat_id") or "") if result.data else ""
+
+    if not chat_id:
+        return jsonify({"ok": False, "error": "Geen Telegram chat ID ingesteld"})
+
+    token = os.environ.get("TELEGRAM_TOKEN", "")
+    if not token:
+        return jsonify({"ok": False, "error": "Bot token niet geconfigureerd"})
+
+    try:
+        r = req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "✅ Setup correct! De Huursignal-bot kan jou bereiken. Je ontvangt binnenkort meldingen over nieuwe woningen."},
+            timeout=10,
+        )
+        resp = r.json()
+        if resp.get("ok"):
+            return jsonify({"ok": True})
+        desc = resp.get("description", "Onbekende Telegram-fout")
+        return jsonify({"ok": False, "error": desc})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
