@@ -1,5 +1,6 @@
 import os
 import functools
+import requests as req
 from datetime import datetime, timezone
 from flask import Flask, render_template_string, redirect, url_for, request, session, jsonify
 from dotenv import load_dotenv
@@ -344,15 +345,20 @@ def forgot_password():
 
 @app.route("/api/forgot-password", methods=["POST"])
 def api_forgot_password():
+    import requests as req
     data = request.json or {}
     email = data.get("email", "").strip()
     if not email:
         return jsonify({"ok": False, "error": "E-mailadres vereist"}), 400
     try:
-        db = get_db()
-        db.auth.reset_password_for_email(
-            email,
-            options={"redirect_to": "https://huursignal.com/reset-password"}
+        supabase_url = os.environ["SUPABASE_URL"]
+        supabase_key = os.environ["SUPABASE_KEY"]
+        req.post(
+            f"{supabase_url}/auth/v1/recover",
+            json={"email": email},
+            params={"redirect_to": "https://huursignal.com/reset-password"},
+            headers={"apikey": supabase_key, "Content-Type": "application/json"},
+            timeout=10,
         )
         return jsonify({"ok": True})
     except Exception as e:
