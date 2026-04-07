@@ -103,7 +103,7 @@ class FundaScraper(BaseScraper):
             f"?selected_area=%5B%22{stad.lower().replace(' ', '-')}%22%5D"
             f"&price=%22-{max_prijs}%22"
         )
-        logger.warning(f"[{self.name}] FlareSolverr: {url}")
+        logger.debug(f"[{self.name}] FlareSolverr: {url}")
         try:
             r = requests.post(FLARESOLVERR_URL, json={
                 "cmd": "request.get",
@@ -112,12 +112,15 @@ class FundaScraper(BaseScraper):
             }, timeout=70)
             data = r.json()
             if data.get("status") != "ok":
-                logger.error(f"[{self.name}] FlareSolverr fout: {data.get('message')}")
-                return []
+                raise RuntimeError(f"FlareSolverr fout: {data.get('message')}")
             html = data["solution"]["response"]
+        except RuntimeError:
+            raise
         except Exception as e:
-            logger.error(f"[{self.name}] FlareSolverr verbindingsfout: {e}")
-            return []
+            raise RuntimeError(f"FlareSolverr verbindingsfout: {e}") from e
+
+        if len(html) < 1000:
+            raise RuntimeError(f"FlareSolverr HTML te klein ({len(html)} bytes) — mogelijk geblokkeerd")
 
         return self._parse_nuxtdata(html, stad)
 
@@ -252,8 +255,8 @@ class FundaScraper(BaseScraper):
                 continue
 
         if parking_count:
-            logger.warning(f"[{self.name}] {parking_count} parkeergelegenheid gefilterd voor {stad}")
-        logger.warning(f"[{self.name}] __NUXT_DATA__: {len(resultaten)} woningen voor {stad}")
+            logger.debug(f"[{self.name}] {parking_count} parkeergelegenheid gefilterd voor {stad}")
+        logger.debug(f"[{self.name}] __NUXT_DATA__: {len(resultaten)} woningen voor {stad}")
         return resultaten
 
 

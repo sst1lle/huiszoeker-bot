@@ -361,18 +361,22 @@ if __name__ == '__main__':
 
             for params in combis.values():
                 scraper = params["scraper"]
-                woningen = scraper.scrape(
-                    stad=params["stad"],
-                    min_prijs=params["min_prijs"],
-                    max_prijs=params["max_prijs"],
-                    types=params["types"],
-                    radius_km=params["radius_km"],
-                )
-                if not woningen:
+                try:
+                    woningen = scraper.scrape(
+                        stad=params["stad"],
+                        min_prijs=params["min_prijs"],
+                        max_prijs=params["max_prijs"],
+                        types=params["types"],
+                        radius_km=params["radius_km"],
+                    )
+                except Exception as e:
+                    print(f"[scrapers] ❌ {scraper.name} fout: {e}", flush=True)
                     asyncio.run(stuur_warning(
-                        f"⚠️ {scraper.name} gaf 0 resultaten!\n"
-                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}"
+                        f"⚠️ {scraper.name} fout!\n"
+                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}\n"
+                        f"Fout: {e}"
                     ))
+                    woningen = []
                 alle_woningen.extend(woningen)
                 counts_per_scraper[scraper.name] = counts_per_scraper.get(scraper.name, 0) + len(woningen)
 
