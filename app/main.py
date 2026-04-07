@@ -255,13 +255,21 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
                 .execute()
                 .data or [])
 
+    # Studio en appartement zijn synoniemen — beide matchen als de user één van beide wil
+    _SYNONIEMEN = {"studio", "appartement"}
+    expanded_types = set()
+    for t in types:
+        expanded_types.add(t)
+        if t in _SYNONIEMEN:
+            expanded_types |= _SYNONIEMEN
+
     nieuw = []
     for listing in listings:
         if listing["id"] in al_gestuurd:
             continue
         listing_type = listing.get("type_woning")
-        # type_woning=None (Pararius) matcht altijd; anders moet het in de voorkeur staan
-        if listing_type and types and listing_type not in types:
+        # type_woning=None (Pararius) matcht altijd; anders moet het in expanded_types staan
+        if listing_type and expanded_types and listing_type not in expanded_types:
             continue
         nieuw.append(listing)
 

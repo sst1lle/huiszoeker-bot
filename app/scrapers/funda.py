@@ -79,6 +79,14 @@ class FundaScraper(BaseScraper):
     request_delay_seconds = 5.0
     uses_types = False
 
+    FUNDA_TYPE_MAP = {
+        "apartment": "appartement",
+        "house":     "woning",
+        "room":      "kamer",
+        "studio":    "studio",
+        "parking":   "parkeerplaats",
+    }
+
     def scrape(
         self,
         stad: str,
@@ -172,6 +180,7 @@ class FundaScraper(BaseScraper):
 
         scraped_at = datetime.utcnow().isoformat()
         resultaten = []
+        parking_count = 0
 
         for listing_ref in listings_list:
             try:
@@ -182,6 +191,12 @@ class FundaScraper(BaseScraper):
                 # URL: alleen /huur/ (niet /koophuur/)
                 rel_url = _deref(raw.get("object_detail_page_relative_url"))
                 if not isinstance(rel_url, str) or "/huur/" not in rel_url:
+                    continue
+
+                # Filter parkeerplaatsen
+                obj_type_raw = _deref(raw.get("object_type"))
+                if obj_type_raw == "parking" or "parkeergelegenheid" in rel_url:
+                    parking_count += 1
                     continue
 
                 url = BASE_URL + rel_url
@@ -197,8 +212,8 @@ class FundaScraper(BaseScraper):
                         adres = (_deref(addr_raw.get("wijk"))
                                  or _deref(addr_raw.get("city")))
 
-                # Object type
-                obj_type = _deref(raw.get("object_type"))
+                # Object type: vertaal Engels → Nederlands voor matching in main.py
+                type_woning = self.FUNDA_TYPE_MAP.get(obj_type_raw) if isinstance(obj_type_raw, str) else None
 
                 # Prijs: raw["price"] → price_dict → ["rent_price"] → [N] → int
                 prijs = None
@@ -225,7 +240,7 @@ class FundaScraper(BaseScraper):
                     "stad":           stad,
                     "prijs":          prijs,
                     "oppervlakte":    oppervlakte,
-                    "type_woning":    obj_type if isinstance(obj_type, str) else None,
+                    "type_woning":    type_woning,
                     "foto_url":       foto_url,
                     "beschikbaar":    True,
                     "scraped_at":     scraped_at,
@@ -236,6 +251,8 @@ class FundaScraper(BaseScraper):
             except Exception:
                 continue
 
+        if parking_count:
+            logger.warning(f"[{self.name}] {parking_count} parkeergelegenheid gefilterd voor {stad}")
         logger.warning(f"[{self.name}] __NUXT_DATA__: {len(resultaten)} woningen voor {stad}")
         return resultaten
 
