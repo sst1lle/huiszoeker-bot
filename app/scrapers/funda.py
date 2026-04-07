@@ -94,45 +94,55 @@ class FundaScraper(BaseScraper):
         soup = BeautifulSoup(html, "html.parser")
         nuxt_script = soup.find("script", {"id": "__NUXT_DATA__"})
         if not nuxt_script or not nuxt_script.string:
-            print("[funda debug] __NUXT_DATA__ script niet gevonden", flush=True)
+            print("[funda debug] __NUXT_DATA__ niet gevonden", flush=True)
         else:
-            raw = nuxt_script.string
-            print(f"[funda debug] __NUXT_DATA__ lengte: {len(raw)}", flush=True)
-            print(f"[funda debug] eerste 3000 chars:\n{raw[:3000]}", flush=True)
-
-            # Zoek naar listing-gerelateerde veldnamen in de ruwe JSON string
-            for term in ("fetchListings", "listingId", "GlobalId", "huurprijs", "rentPrice",
-                         "objectType", "streetName", "postalCode", "per maand", "address"):
-                count = raw.count(term)
-                if count:
-                    idx = raw.index(term)
-                    snippet = raw[max(0, idx-30):idx+80]
-                    print(f"[funda debug] '{term}' ({count}x): ...{snippet}...", flush=True)
-
-            # Probeer te parsen en zoek fetchListings in de array
             try:
-                arr = json.loads(raw)
-                print(f"[funda debug] array lengte: {len(arr)}", flush=True)
-                # fetchListings staat op index 3 als {"fetchListings": 4, ...}
-                # Zoek het object met fetchListings als key
-                for i, item in enumerate(arr):
-                    if isinstance(item, dict) and "fetchListings" in item:
-                        fl_idx = item["fetchListings"]
-                        fl_val = arr[fl_idx] if isinstance(fl_idx, int) and fl_idx < len(arr) else fl_idx
-                        print(f"[funda debug] arr[{i}] heeft fetchListings → index {fl_idx} → type: {type(fl_val).__name__}", flush=True)
-                        if isinstance(fl_val, (dict, list)):
-                            print(f"[funda debug] fetchListings value (500 chars): {str(fl_val)[:500]}", flush=True)
-                        # Zoek ook dieper: resolve één niveau
-                        if isinstance(fl_val, dict):
-                            for k, v in list(fl_val.items())[:10]:
-                                resolved = arr[v] if isinstance(v, int) and v < len(arr) else v
-                                print(f"[funda debug]   [{k}] → {str(resolved)[:120]}", flush=True)
-            except Exception as ex:
-                print(f"[funda debug] JSON parse fout: {ex}", flush=True)
+                arr = json.loads(nuxt_script.string)
 
-        # Zoek naar Funda API-endpoints in de HTML (voor directe API-aanroep)
-        api_urls = re.findall(r'https?://[a-z.]*funda[a-z.]*(?:api|search|listing)[^"\'\\s]{0,80}', html)
-        print(f"[funda debug] API URL kandidaten: {list(set(api_urls))[:5]}", flush=True)
+                # Stap 1: vind de search state (heeft "listings" + "totalListingsCount")
+                search_state = None
+                for item in arr:
+                    if isinstance(item, dict) and "listings" in item and "totalListingsCount" in item:
+                        search_state = item
+                        break
+
+                if not search_state:
+                    print("[funda debug] search_state niet gevonden", flush=True)
+                else:
+                    listings_idx = search_state["listings"]
+                    total_idx = search_state["totalListingsCount"]
+                    total = arr[total_idx] if isinstance(total_idx, int) else total_idx
+                    print(f"[funda debug] listings op index {listings_idx}, total={total}", flush=True)
+
+                    listings_raw = arr[listings_idx] if isinstance(listings_idx, int) and listings_idx < len(arr) else None
+                    print(f"[funda debug] listings type: {type(listings_raw).__name__}, len: {len(listings_raw) if isinstance(listings_raw, list) else '?'}", flush=True)
+
+                    # Stap 2: resolve eerste listing volledig
+                    if isinstance(listings_raw, list) and listings_raw:
+                        first_ptr = listings_raw[0]
+                        first = arr[first_ptr] if isinstance(first_ptr, int) and first_ptr < len(arr) else first_ptr
+                        print(f"[funda debug] eerste listing keys: {list(first.keys()) if isinstance(first, dict) else type(first).__name__}", flush=True)
+
+                        if isinstance(first, dict):
+                            for k, v in first.items():
+                                if isinstance(v, int) and v >= 0 and v < len(arr):
+                                    resolved = arr[v]
+                                    # Één niveau dieper voor dicts/type-tags
+                                    if isinstance(resolved, list) and len(resolved) == 2 and isinstance(resolved[0], str):
+                                        inner = arr[resolved[1]] if isinstance(resolved[1], int) and resolved[1] < len(arr) else resolved[1]
+                                        if isinstance(inner, dict):
+                                            print(f"[funda debug]   {k} → {resolved[0]} → keys: {list(inner.keys())[:8]}", flush=True)
+                                        else:
+                                            print(f"[funda debug]   {k} → {resolved[0]} → {str(inner)[:60]}", flush=True)
+                                    elif isinstance(resolved, dict):
+                                        print(f"[funda debug]   {k} → dict keys: {list(resolved.keys())[:8]}", flush=True)
+                                    else:
+                                        print(f"[funda debug]   {k} = {str(resolved)[:60]}", flush=True)
+                                else:
+                                    print(f"[funda debug]   {k} = {v} (null/literal)", flush=True)
+
+            except Exception as ex:
+                print(f"[funda debug] fout: {ex}", flush=True)
         # ── /DEBUG ────────────────────────────────────────────────────────────
 
         # Probeer __NEXT_DATA__ eerst; val terug op HTML-parse
