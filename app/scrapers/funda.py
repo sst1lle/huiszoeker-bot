@@ -98,8 +98,24 @@ class FundaScraper(BaseScraper):
         else:
             try:
                 arr = json.loads(nuxt_script.string)
+                _TAGS = ("Ref", "Reactive", "ShallowReactive", "ShallowRef")
 
-                # Stap 1: vind de search state (heeft "listings" + "totalListingsCount")
+                def _r(v, depth=0):
+                    """Resolve Nuxt 3 pointer/type-tag chain."""
+                    if depth > 20:
+                        return v
+                    if isinstance(v, int):
+                        if v < 0 or v >= len(arr):
+                            return None
+                        return _r(arr[v], depth + 1)
+                    if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                        if v[0] in _TAGS:
+                            return _r(v[1], depth + 1)
+                        if v[0] == "EmptyRef":
+                            return None
+                    return v
+
+                # Vind search state
                 search_state = None
                 for item in arr:
                     if isinstance(item, dict) and "listings" in item and "totalListingsCount" in item:
@@ -109,40 +125,28 @@ class FundaScraper(BaseScraper):
                 if not search_state:
                     print("[funda debug] search_state niet gevonden", flush=True)
                 else:
-                    listings_idx = search_state["listings"]
-                    total_idx = search_state["totalListingsCount"]
-                    total = arr[total_idx] if isinstance(total_idx, int) else total_idx
-                    print(f"[funda debug] listings op index {listings_idx}, total={total}", flush=True)
+                    listings = _r(search_state["listings"])
+                    print(f"[funda debug] listings resolved: {type(listings).__name__}, len={len(listings) if isinstance(listings, list) else '?'}", flush=True)
 
-                    listings_raw = arr[listings_idx] if isinstance(listings_idx, int) and listings_idx < len(arr) else None
-                    print(f"[funda debug] listings type: {type(listings_raw).__name__}, len: {len(listings_raw) if isinstance(listings_raw, list) else '?'}", flush=True)
-
-                    # Stap 2: resolve eerste listing volledig
-                    if isinstance(listings_raw, list) and listings_raw:
-                        first_ptr = listings_raw[0]
-                        first = arr[first_ptr] if isinstance(first_ptr, int) and first_ptr < len(arr) else first_ptr
-                        print(f"[funda debug] eerste listing keys: {list(first.keys()) if isinstance(first, dict) else type(first).__name__}", flush=True)
-
+                    if isinstance(listings, list) and listings:
+                        first = _r(listings[0])
+                        print(f"[funda debug] eerste listing type: {type(first).__name__}", flush=True)
                         if isinstance(first, dict):
+                            print(f"[funda debug] eerste listing keys: {list(first.keys())}", flush=True)
                             for k, v in first.items():
-                                if isinstance(v, int) and v >= 0 and v < len(arr):
-                                    resolved = arr[v]
-                                    # Één niveau dieper voor dicts/type-tags
-                                    if isinstance(resolved, list) and len(resolved) == 2 and isinstance(resolved[0], str):
-                                        inner = arr[resolved[1]] if isinstance(resolved[1], int) and resolved[1] < len(arr) else resolved[1]
-                                        if isinstance(inner, dict):
-                                            print(f"[funda debug]   {k} → {resolved[0]} → keys: {list(inner.keys())[:8]}", flush=True)
-                                        else:
-                                            print(f"[funda debug]   {k} → {resolved[0]} → {str(inner)[:60]}", flush=True)
-                                    elif isinstance(resolved, dict):
-                                        print(f"[funda debug]   {k} → dict keys: {list(resolved.keys())[:8]}", flush=True)
-                                    else:
-                                        print(f"[funda debug]   {k} = {str(resolved)[:60]}", flush=True)
+                                resolved = _r(v)
+                                if isinstance(resolved, dict):
+                                    sub = {sk: _r(sv) for sk, sv in list(resolved.items())[:6]}
+                                    print(f"[funda debug]   {k} → {sub}", flush=True)
                                 else:
-                                    print(f"[funda debug]   {k} = {v} (null/literal)", flush=True)
+                                    print(f"[funda debug]   {k} = {str(resolved)[:80]}", flush=True)
+                        else:
+                            print(f"[funda debug] eerste listing na resolve: {str(first)[:200]}", flush=True)
 
             except Exception as ex:
+                import traceback
                 print(f"[funda debug] fout: {ex}", flush=True)
+                traceback.print_exc()
         # ── /DEBUG ────────────────────────────────────────────────────────────
 
         # Probeer __NEXT_DATA__ eerst; val terug op HTML-parse
