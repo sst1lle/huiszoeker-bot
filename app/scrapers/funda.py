@@ -67,72 +67,15 @@ class FundaScraper(BaseScraper):
         types: list[str],
         radius_km: int | None = None,
     ) -> list[dict]:
-        # Stap 1: funda-scraper package
-        try:
-            resultaten = self._via_package(stad, min_prijs, max_prijs)
-            if resultaten is not None:
-                return resultaten
-        except Exception as e:
-            logger.warning(f"[{self.name}] funda-scraper mislukt: {e} — probeer FlareSolverr...")
-
-        # Stap 2 + 3: FlareSolverr
         return self._via_flaresolverr(stad, min_prijs, max_prijs)
 
-    # ── Stap 1: funda-scraper package ────────────────────────────────────────
-
-    def _via_package(self, stad: str, min_prijs: int, max_prijs: int) -> list[dict] | None:
-        from funda_scraper import FundaScraper as _Lib  # lazy import — optionele dependency
-
-        lib = _Lib(
-            area=stad,
-            want_to="rent",
-            find_past=False,
-            page_start=1,
-            n_pages=3,
-            min_price=min_prijs or None,
-            max_price=max_prijs or None,
-        )
-        df = lib.run(raw_data=False, save=False)
-
-        if df is None or df.empty:
-            logger.warning(f"[{self.name}] funda-scraper: lege response voor {stad}")
-            return None
-
-        scraped_at = datetime.utcnow().isoformat()
-        resultaten = []
-
-        for _, row in df.iterrows():
-            url = str(row.get("url", "")).strip()
-            if not url or not url.startswith("http"):
-                continue
-
-            resultaten.append({
-                "source":         "funda",
-                "url":            url,
-                "external_id":    _extract_external_id(url),
-                "adres":          str(row.get("address", "")).strip() or None,
-                "stad":           stad,
-                "prijs":          _parse_prijs(row.get("price")),
-                "oppervlakte":    _parse_opp(row.get("size") or row.get("living_area")),
-                "type_woning":    None,
-                "foto_url":       None,
-                "beschikbaar":    True,
-                "scraped_at":     scraped_at,
-                "omschrijving":   str(row.get("description", "")).strip() or None,
-                "rating":         None,
-                "rating_details": None,
-            })
-
-        logger.info(f"[{self.name}] package: {len(resultaten)} woningen voor {stad}")
-        return resultaten
-
-    # ── Stap 2: FlareSolverr ──────────────────────────────────────────────────
+    # ── FlareSolverr ─────────────────────────────────────────────────────────
 
     def _via_flaresolverr(self, stad: str, min_prijs: int, max_prijs: int) -> list[dict]:
         stad_slug = stad.lower().replace(" ", "-")
         url = f"{BASE_URL}/huur/{stad_slug}/?price_min={min_prijs}&price_max={max_prijs}"
 
-        logger.info(f"[{self.name}] FlareSolverr: {url}")
+        logger.warning(f"[{self.name}] FlareSolverr: {url}")
         try:
             r = requests.post(FLARESOLVERR_URL, json={
                 "cmd": "request.get",
@@ -192,7 +135,7 @@ class FundaScraper(BaseScraper):
                     "rating":         None,
                     "rating_details": None,
                 })
-            logger.info(f"[{self.name}] __NEXT_DATA__: {len(resultaten)} woningen voor {stad}")
+            logger.warning(f"[{self.name}] __NEXT_DATA__: {len(resultaten)} woningen voor {stad}")
             return resultaten
         except Exception as e:
             logger.warning(f"[{self.name}] __NEXT_DATA__ parse mislukt: {e}")
@@ -249,7 +192,7 @@ class FundaScraper(BaseScraper):
                 "rating_details": None,
             })
 
-        logger.info(f"[{self.name}] HTML fallback: {len(resultaten)} woningen voor {stad}")
+        logger.warning(f"[{self.name}] HTML fallback: {len(resultaten)} woningen voor {stad}")
         return resultaten
 
 
