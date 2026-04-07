@@ -28,8 +28,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Voeg app/ toe aan sys.path zodat storage geïmporteerd kan worden
-APP_DIR = Path(__file__).resolve().parent.parent / "app"
+# Voeg app/ toe aan sys.path zodat storage geïmporteerd kan worden.
+# Lokaal: scripts/ zit naast app/, dus parent.parent / "app" = repo/app/
+# Docker: COPY app /app → storage.py zit direct in /app (= parent.parent)
+_REPO = Path(__file__).resolve().parent.parent
+APP_DIR = _REPO / "app" if (_REPO / "app" / "storage.py").exists() else _REPO
 sys.path.insert(0, str(APP_DIR))
 
 from storage import ListingStorage  # noqa: E402
