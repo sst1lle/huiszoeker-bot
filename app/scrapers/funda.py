@@ -72,8 +72,7 @@ class FundaScraper(BaseScraper):
     # ── FlareSolverr ─────────────────────────────────────────────────────────
 
     def _via_flaresolverr(self, stad: str, min_prijs: int, max_prijs: int) -> list[dict]:
-        stad_slug = stad.lower().replace(" ", "-")
-        url = f"{BASE_URL}/huur/{stad_slug}/?price_min={min_prijs}&price_max={max_prijs}"
+        url = f"{BASE_URL}/zoeken/huur?selected_area=%5B%22{stad.lower().replace(' ', '-')}%22%5D&price=%22-{max_prijs}%22"
 
         logger.warning(f"[{self.name}] FlareSolverr: {url}")
         try:
@@ -90,6 +89,23 @@ class FundaScraper(BaseScraper):
         except Exception as e:
             logger.error(f"[{self.name}] FlareSolverr verbindingsfout: {e}")
             return []
+
+        # ── DEBUG ─────────────────────────────────────────────────────────────
+        print(f"[funda debug] HTML lengte: {len(html)}", flush=True)
+        print(f"[funda debug] Eerste 1000 chars:\n{html[:1000]}", flush=True)
+        has_next_data = "__NEXT_DATA__" in html
+        print(f"[funda debug] __NEXT_DATA__ aanwezig: {has_next_data}", flush=True)
+        if has_next_data:
+            soup = BeautifulSoup(html, "html.parser")
+            script = soup.find("script", {"id": "__NEXT_DATA__"})
+            if script:
+                try:
+                    nd = json.loads(script.string)
+                    page_props = nd.get("props", {}).get("pageProps", {})
+                    print(f"[funda debug] pageProps keys: {list(page_props.keys())}", flush=True)
+                except Exception as ex:
+                    print(f"[funda debug] JSON parse fout: {ex}", flush=True)
+        # ── /DEBUG ────────────────────────────────────────────────────────────
 
         # Probeer __NEXT_DATA__ eerst; val terug op HTML-parse
         resultaten = self._parse_nextdata(html, stad)
