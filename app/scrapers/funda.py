@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.funda.nl"
 FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
+_SLUG_PREFIXES = {
+    "appartement", "huis", "studio", "kamer", "woning", "parkeergelegenheid",
+    "garage", "praktijkruimte", "kantoorruimte", "winkelruimte", "bedrijfsruimte",
+    "eengezinswoning", "tussenwoning", "hoekwoning", "vrijstaande", "object",
+    "bovenwoning", "benedenwoning", "maisonnette", "penthouse", "galerijflat",
+    "portiekflat", "portiekwoning", "recreatiewoning",
+}
+
 
 def _parse_prijs(val) -> int | None:
     if val is None:
@@ -31,27 +39,39 @@ def _parse_opp(val) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _extract_external_id(url: str) -> str | None:
-    # Funda URLs: /huur/den-haag/huis-12345678-straatnaam/
-    m = re.search(r"-(\d{7,9})-", url)
-    return m.group(1) if m else None
+def _adres_uit_slug(rel_url: str) -> str | None:
+    """
+    /detail/huur/den-haag/appartement-randveen-78/43291827/ → "Randveen 78"
+    /detail/huur/utrecht/parkeergelegenheid-karel-doormanlaan-22-a/43292883/ → "Karel Doormanlaan 22 a"
+    """
+    try:
+        parts = rel_url.strip("/").split("/")
+        if len(parts) < 5:
+            return None
+        slug = parts[-2]  # bv. "appartement-randveen-78"
+        segs = slug.split("-")
+        while segs and segs[0].lower() in _SLUG_PREFIXES:
+            segs.pop(0)
+        if not segs:
+            return None
+        return " ".join(s.title() if not re.match(r"^\d", s) else s for s in segs)
+    except Exception:
+        return None
 
 
 class FundaScraper(BaseScraper):
     """
-    Scraper voor Funda huurwoningen.
+    Scraper voor Funda huurwoningen via FlareSolverr + Nuxt 3 __NUXT_DATA__ parse.
 
-    Strategie (in volgorde):
-      1. funda-scraper package (pip install funda-scraper) — meest betrouwbaar
-      2. FlareSolverr + __NEXT_DATA__ JSON parse — als package faalt/geblokkeerd
-      3. FlareSolverr + BeautifulSoup HTML parse — last resort
+    Funda migreerde van Next.js naar Nuxt.js. Listing-data zit in
+    <script id="__NUXT_DATA__"> als een gecomprimeerde pointer-array:
+    - Waarden in dicts zijn integer-pointers naar de flat array
+    - [N] (lijst met één int) = pointer → nuxt_data[N]
+    - ["Ref"/"Reactive"/etc., N] = type-tag → nuxt_data[N]
+    - Primitieven (str/int/bool/None) = directe waarden
 
     robots.txt: funda.nl staat crawlen van /huur/ pagina's toe.
-    Disallowed zijn o.a. /mijn-funda/, /api/, /account/ en admin-paden.
-    Huuroverzichtspagina's vallen buiten de Disallow-regels.
-
-    uses_types = False: Funda heeft geen aparte URL per woningtype voor huur;
-    het type-filter werkt via query parameters die intern worden afgehandeld.
+    uses_types = False: Funda heeft geen aparte URL per woningtype.
     """
 
     name = "funda"
@@ -69,11 +89,12 @@ class FundaScraper(BaseScraper):
     ) -> list[dict]:
         return self._via_flaresolverr(stad, min_prijs, max_prijs)
 
-    # ── FlareSolverr ─────────────────────────────────────────────────────────
-
     def _via_flaresolverr(self, stad: str, min_prijs: int, max_prijs: int) -> list[dict]:
-        url = f"{BASE_URL}/zoeken/huur?selected_area=%5B%22{stad.lower().replace(' ', '-')}%22%5D&price=%22-{max_prijs}%22"
-
+        url = (
+            f"{BASE_URL}/zoeken/huur"
+            f"?selected_area=%5B%22{stad.lower().replace(' ', '-')}%22%5D"
+            f"&price=%22-{max_prijs}%22"
+        )
         logger.warning(f"[{self.name}] FlareSolverr: {url}")
         try:
             r = requests.post(FLARESOLVERR_URL, json={
@@ -90,173 +111,138 @@ class FundaScraper(BaseScraper):
             logger.error(f"[{self.name}] FlareSolverr verbindingsfout: {e}")
             return []
 
-        # ── DEBUG ─────────────────────────────────────────────────────────────
+        return self._parse_nuxtdata(html, stad)
+
+    def _parse_nuxtdata(self, html: str, stad: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")
-        nuxt_script = soup.find("script", {"id": "__NUXT_DATA__"})
-        if not nuxt_script or not nuxt_script.string:
-            print("[funda debug] __NUXT_DATA__ niet gevonden", flush=True)
-        else:
-            try:
-                arr = json.loads(nuxt_script.string)
-                _TAGS = ("Ref", "Reactive", "ShallowReactive", "ShallowRef")
+        script = soup.find("script", {"id": "__NUXT_DATA__"})
+        if not script or not script.string:
+            return []
 
-                def _r(v, depth=0):
-                    """Resolve Nuxt 3 pointer/type-tag chain."""
-                    if depth > 20:
-                        return v
-                    if isinstance(v, int):
-                        if v < 0 or v >= len(arr):
-                            return None
-                        return _r(arr[v], depth + 1)
-                    if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
-                        if v[0] in _TAGS:
-                            return _r(v[1], depth + 1)
-                        if v[0] == "EmptyRef":
-                            return None
-                    return v
-
-                # Vind search state
-                search_state = None
-                for item in arr:
-                    if isinstance(item, dict) and "listings" in item and "totalListingsCount" in item:
-                        search_state = item
-                        break
-
-                if not search_state:
-                    print("[funda debug] search_state niet gevonden", flush=True)
-                else:
-                    listings = _r(search_state["listings"])
-                    print(f"[funda debug] listings resolved: {type(listings).__name__}, len={len(listings) if isinstance(listings, list) else '?'}", flush=True)
-
-                    if isinstance(listings, list) and listings:
-                        first = _r(listings[0])
-                        print(f"[funda debug] eerste listing type: {type(first).__name__}", flush=True)
-                        if isinstance(first, dict):
-                            print(f"[funda debug] eerste listing keys: {list(first.keys())}", flush=True)
-                            for k, v in first.items():
-                                resolved = _r(v)
-                                if isinstance(resolved, dict):
-                                    sub = {sk: _r(sv) for sk, sv in list(resolved.items())[:6]}
-                                    print(f"[funda debug]   {k} → {sub}", flush=True)
-                                else:
-                                    print(f"[funda debug]   {k} = {str(resolved)[:80]}", flush=True)
-                        else:
-                            print(f"[funda debug] eerste listing na resolve: {str(first)[:200]}", flush=True)
-
-            except Exception as ex:
-                import traceback
-                print(f"[funda debug] fout: {ex}", flush=True)
-                traceback.print_exc()
-        # ── /DEBUG ────────────────────────────────────────────────────────────
-
-        # Probeer __NEXT_DATA__ eerst; val terug op HTML-parse
-        resultaten = self._parse_nextdata(html, stad)
-        if not resultaten:
-            resultaten = self._parse_html(html, stad)
-        return resultaten
-
-    def _parse_nextdata(self, html: str, stad: str) -> list[dict]:
-        """
-        Funda gebruikt Next.js — listing-data zit in <script id="__NEXT_DATA__">.
-        Zoek recursief naar een lijst van objecten met 'GlobalId' (Funda's listing-ID).
-        Dit pad is fragiel en kan breken bij Funda-deploys.
-        """
         try:
-            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-            if not m:
-                return []
-            nextdata = json.loads(m.group(1))
-            hits = self._find_hits(nextdata)
-            if not hits:
-                return []
+            arr = json.loads(script.string)
+        except Exception:
+            return []
 
-            scraped_at = datetime.utcnow().isoformat()
-            resultaten = []
-            for hit in hits:
-                url = hit.get("Url") or hit.get("url", "")
-                if not url.startswith("http"):
-                    url = BASE_URL + url
-                prijs_raw = hit.get("PriceRent") or hit.get("Price") or hit.get("priceRent")
+        _TAGS = {"Ref", "Reactive", "ShallowReactive", "ShallowRef"}
+
+        def _deref(v):
+            """Eén dereference: pointer (int of type-tag) → waarde in array."""
+            if isinstance(v, int):
+                return arr[v] if 0 <= v < len(arr) else None
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                if v[0] in _TAGS:
+                    return _deref(v[1])
+                if v[0] == "EmptyRef":
+                    return None
+            return v
+
+        def _resolve(val, depth=0):
+            """
+            Resolve totdat een primitieve waarde bereikt is.
+            [N] (single-int list) → nuxt_data[N] → recurse
+            Type-tags → volg de referentie → recurse
+            Primitieven → return as-is
+            """
+            if depth > 10 or val is None:
+                return val
+            if isinstance(val, list) and len(val) == 1 and isinstance(val[0], int):
+                return _resolve(_deref(val[0]), depth + 1)
+            if isinstance(val, list) and len(val) == 2 and isinstance(val[0], str):
+                if val[0] in _TAGS:
+                    return _resolve(_deref(val[1]), depth + 1)
+                if val[0] == "EmptyRef":
+                    return None
+            return val
+
+        # Zoek de search state: het dict met "listings" + "totalListingsCount"
+        search_state = None
+        for item in arr:
+            if isinstance(item, dict) and "listings" in item and "totalListingsCount" in item:
+                search_state = item
+                break
+
+        if not search_state:
+            return []
+
+        # search_state["listings"] → int → ["Ref", N] → lijst van listing-pointers
+        listings_list = _resolve(_deref(search_state["listings"]))
+        if not isinstance(listings_list, list) or not listings_list:
+            return []
+
+        scraped_at = datetime.utcnow().isoformat()
+        resultaten = []
+
+        for listing_ref in listings_list:
+            try:
+                raw = _deref(listing_ref)
+                if not isinstance(raw, dict):
+                    continue
+
+                # URL: alleen /huur/ (niet /koophuur/)
+                rel_url = _deref(raw.get("object_detail_page_relative_url"))
+                if not isinstance(rel_url, str) or "/huur/" not in rel_url:
+                    continue
+
+                url = BASE_URL + rel_url
+
+                # External ID: laatste pad-segment vóór trailing slash
+                external_id = rel_url.strip("/").split("/")[-1]
+
+                # Adres uit URL-slug; fallback naar address.wijk
+                adres = _adres_uit_slug(rel_url)
+                if not adres:
+                    addr_raw = _deref(raw.get("address"))
+                    if isinstance(addr_raw, dict):
+                        adres = (_deref(addr_raw.get("wijk"))
+                                 or _deref(addr_raw.get("city")))
+
+                # Object type
+                obj_type = _deref(raw.get("object_type"))
+
+                # Prijs: raw["price"] → price_dict → ["rent_price"] → [N] → int
+                prijs = None
+                price_dict = _deref(raw.get("price"))
+                if isinstance(price_dict, dict):
+                    prijs = _parse_prijs(_resolve(_deref(price_dict.get("rent_price"))))
+
+                # Oppervlakte: raw["floor_area"] → [N] → int
+                oppervlakte = _parse_opp(_resolve(_deref(raw.get("floor_area"))))
+
+                # Foto: photo_image_id[0] → resolve → string
+                foto_url = None
+                photo_list = _deref(raw.get("photo_image_id"))
+                if isinstance(photo_list, list) and photo_list:
+                    foto_id = _resolve(_deref(photo_list[0]))
+                    if isinstance(foto_id, str) and foto_id.startswith("http"):
+                        foto_url = foto_id
+
                 resultaten.append({
                     "source":         "funda",
                     "url":            url,
-                    "external_id":    str(hit.get("GlobalId") or _extract_external_id(url) or ""),
-                    "adres":          hit.get("Address") or hit.get("address"),
+                    "external_id":    external_id,
+                    "adres":          adres,
                     "stad":           stad,
-                    "prijs":          _parse_prijs(prijs_raw),
-                    "oppervlakte":    _parse_opp(hit.get("FloorArea") or hit.get("floorArea")),
-                    "type_woning":    None,
-                    "foto_url":       hit.get("MainImageUrl") or hit.get("mainImageUrl"),
+                    "prijs":          prijs,
+                    "oppervlakte":    oppervlakte,
+                    "type_woning":    obj_type if isinstance(obj_type, str) else None,
+                    "foto_url":       foto_url,
                     "beschikbaar":    True,
                     "scraped_at":     scraped_at,
                     "omschrijving":   None,
                     "rating":         None,
                     "rating_details": None,
                 })
-            logger.warning(f"[{self.name}] __NEXT_DATA__: {len(resultaten)} woningen voor {stad}")
-            return resultaten
-        except Exception as e:
-            logger.warning(f"[{self.name}] __NEXT_DATA__ parse mislukt: {e}")
-            return []
-
-    def _find_hits(self, obj, depth: int = 0) -> list:
-        """Zoek recursief in __NEXT_DATA__ naar een lijst van listing-objecten (herkenbaar aan 'GlobalId')."""
-        if depth > 8:
-            return []
-        if isinstance(obj, list) and obj and isinstance(obj[0], dict) and "GlobalId" in obj[0]:
-            return obj
-        if isinstance(obj, dict):
-            for v in obj.values():
-                result = self._find_hits(v, depth + 1)
-                if result:
-                    return result
-        return []
-
-    def _parse_html(self, html: str, stad: str) -> list[dict]:
-        """
-        Last-resort BeautifulSoup parse.
-        Funda rendert listing-cards server-side met data-object-url-tracking attributen.
-        CSS-klassen kunnen veranderen bij frontend-deploys.
-        """
-        soup = BeautifulSoup(html, "html.parser")
-        resultaten = []
-        scraped_at = datetime.utcnow().isoformat()
-
-        for card in soup.select('[data-object-url-tracking="resultlist"]'):
-            a = card.select_one("a[href*='/huur/']")
-            if not a:
+            except Exception:
                 continue
-            url = a.get("href", "")
-            if not url.startswith("http"):
-                url = BASE_URL + url
 
-            adres_el = card.select_one("[class*='street-name']") or card.select_one("h2")
-            prijs_el  = card.select_one("[class*='price']")
-
-            resultaten.append({
-                "source":         "funda",
-                "url":            url,
-                "external_id":    _extract_external_id(url),
-                "adres":          adres_el.get_text(strip=True) if adres_el else None,
-                "stad":           stad,
-                "prijs":          _parse_prijs(prijs_el.get_text()) if prijs_el else None,
-                "oppervlakte":    None,
-                "type_woning":    None,
-                "foto_url":       None,
-                "beschikbaar":    True,
-                "scraped_at":     scraped_at,
-                "omschrijving":   None,
-                "rating":         None,
-                "rating_details": None,
-            })
-
-        logger.warning(f"[{self.name}] HTML fallback: {len(resultaten)} woningen voor {stad}")
+        logger.warning(f"[{self.name}] __NUXT_DATA__: {len(resultaten)} woningen voor {stad}")
         return resultaten
 
 
 if __name__ == "__main__":
     import sys
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.WARNING)
     stad = sys.argv[1] if len(sys.argv) > 1 else "den-haag"
     min_p = int(sys.argv[2]) if len(sys.argv) > 2 else 500
     max_p = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
