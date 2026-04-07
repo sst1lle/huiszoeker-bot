@@ -102,6 +102,16 @@ def valideer_listings():
     return len(listings), vervallen
 
 
+# Kolommen die bestaan in de Supabase listings tabel.
+# Scraper-output kan extra velden bevatten (omschrijving, rating, scraped_at, ...)
+# die alleen naar de Parquet datalake gaan. Deze whitelist voorkomt dat nieuwe
+# scraper-velden de Supabase insert breken.
+_SUPABASE_LISTING_FIELDS = {
+    "source", "external_id", "url", "adres", "stad",
+    "prijs", "oppervlakte", "type_woning", "foto_url", "beschikbaar",
+}
+
+
 def upsert_listing(listing: dict) -> str | None:
     """Insert nieuwe listing of update bestaande als hij onvolledig is (migratiestub). Geeft UUID terug."""
     if not listing.get("prijs"):
@@ -125,7 +135,8 @@ def upsert_listing(listing: dict) -> str | None:
         return record["id"]
 
     nu = datetime.now(timezone.utc).isoformat()
-    nieuw = {**listing, "eerste_gezien": nu, "created_at": nu, "laatst_gevalideerd": nu}
+    supabase_data = {k: v for k, v in listing.items() if k in _SUPABASE_LISTING_FIELDS}
+    nieuw = {**supabase_data, "eerste_gezien": nu, "created_at": nu, "laatst_gevalideerd": nu}
     result = db.table("listings").insert(nieuw).execute()
     return result.data[0]["id"] if result.data else None
 
