@@ -32,7 +32,11 @@ from pathlib import Path
 # Lokaal: scripts/ zit naast app/, dus parent.parent / "app" = repo/app/
 # Docker: COPY app /app → storage.py zit direct in /app (= parent.parent)
 _REPO = Path(__file__).resolve().parent.parent
-APP_DIR = _REPO / "app" if (_REPO / "app" / "storage.py").exists() else _REPO
+APP_DIR = next(
+    (p for p in [_REPO / "app" / "backend", _REPO / "app", _REPO]
+     if (p / "storage.py").exists()),
+    _REPO / "app" / "backend",
+)
 sys.path.insert(0, str(APP_DIR))
 
 from storage import ListingStorage  # noqa: E402

@@ -16,6 +16,7 @@ services:
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
+      - PYTHONPATH=/app/backend:/app
     volumes:
       - ./data:/app/data
       - /mnt/ssd/huursignal/datalake:/app/datalake
@@ -38,4 +39,5 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - PYTHONPATH=/app/frontend:/app
     command: gunicorn -w 4 -b 0.0.0.0:5000 web:app
