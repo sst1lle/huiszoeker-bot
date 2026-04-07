@@ -44,6 +44,17 @@ CREATE TABLE sent_notifications (
   UNIQUE(user_id, listing_id)
 );
 
+-- Aan/uit-schakelaar per scraper (beheerd via /admin/scrapers)
+CREATE TABLE scraper_config (
+  name       TEXT PRIMARY KEY,
+  enabled    BOOLEAN DEFAULT TRUE,
+  last_run   TIMESTAMPTZ,          -- tijdstip laatste succesvolle scrape-ronde
+  last_count INT,                  -- aantal listings gevonden in laatste ronde
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- Geen RLS-policies nodig: service_role bypasses RLS; authenticated users hebben geen toegang
+ALTER TABLE scraper_config ENABLE ROW LEVEL SECURITY;
+
 -- Index voor snelle lookups
 CREATE INDEX idx_listings_stad ON listings(stad);
 CREATE INDEX idx_listings_beschikbaar ON listings(beschikbaar);

@@ -1,6 +1,12 @@
 import re
+import logging
+from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
+
+from .base import BaseScraper
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://kamernet.nl"
 FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
@@ -15,6 +21,15 @@ TYPE_SEGMENT = {
     "anti-kraak":       "apartment",  # geen aparte pagina, filter handmatig
 }
 
+# Mapping van Engelse Kamernet typenamen naar Nederlands
+_TYPE_NL = {
+    "apartment": "appartement",
+    "room": "kamer",
+    "studio": "studio",
+    "student housing": "studentenwoning",
+    "anti-squat": "anti-kraak",
+}
+
 
 def _fetch(url: str) -> str | None:
     """Probeer eerst direct; val terug op FlareSolverr bij blokkade."""
@@ -24,11 +39,11 @@ def _fetch(url: str) -> str | None:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
         if r.status_code == 200 and "Just a moment" not in r.text:
-            print(f"[kamernet] ✅ Direct request gelukt", flush=True)
+            logger.info("[kamernet] Direct request gelukt")
             return r.text
-        print(f"[kamernet] Direct request geblokkeerd (status {r.status_code}), probeer FlareSolverr...", flush=True)
+        logger.warning(f"[kamernet] Direct request geblokkeerd (status {r.status_code}), probeer FlareSolverr...")
     except Exception as e:
-        print(f"[kamernet] Direct request mislukt ({e}), probeer FlareSolverr...", flush=True)
+        logger.warning(f"[kamernet] Direct request mislukt ({e}), probeer FlareSolverr...")
 
     # Stap 2: FlareSolverr fallback
     try:
@@ -39,12 +54,12 @@ def _fetch(url: str) -> str | None:
         }, timeout=70)
         data = r.json()
         status = data.get("status")
-        print(f"[kamernet] FlareSolverr status: {status}", flush=True)
+        logger.info(f"[kamernet] FlareSolverr status: {status}")
         if status == "ok":
             return data["solution"]["response"]
-        print(f"[kamernet] ⚠️ FlareSolverr fout: {data.get('message')}", flush=True)
+        logger.warning(f"[kamernet] FlareSolverr fout: {data.get('message')}")
     except Exception as e:
-        print(f"[kamernet] ❌ FlareSolverr verbindingsfout: {e}", flush=True)
+        logger.error(f"[kamernet] FlareSolverr verbindingsfout: {e}")
 
     return None
 
@@ -56,17 +71,7 @@ def _parse_prijs(text: str) -> int | None:
     return int(match.group()) if match else None
 
 
-# Mapping van Engelse Kamernet typenamen naar Nederlands
-_TYPE_NL = {
-    "apartment": "appartement",
-    "room": "kamer",
-    "studio": "studio",
-    "student housing": "studentenwoning",
-    "anti-squat": "anti-kraak",
-}
-
-
-def _parse_listings(html: str, stad: str) -> list[dict]:
+def _parse_listings(html: str, stad: str, scraped_at: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
@@ -147,63 +152,78 @@ def _parse_listings(html: str, stad: str) -> list[dict]:
             "type_woning": type_woning,
             "foto_url": foto_url,
             "beschikbaar": True,
+            "scraped_at": scraped_at,
+            "omschrijving": None,
+            "rating": None,
+            "rating_details": None,
         })
 
     return results
 
 
-def scrape_kamernet(stad: str, min_prijs: int, max_prijs: int, types: list[str], radius_km: int | None = None) -> list[dict]:
-    """Geeft lijst van listing-dicts terug voor Kamernet."""
-    stad_slug = stad.lower().replace(" ", "-")
+class KamernetScraper(BaseScraper):
+    name = "kamernet"
+    robots_txt_compliant = True
+    request_delay_seconds = 2.0
 
-    gemeubileerd_filter = "gemeubileerd" in types
-    scrape_types = [t for t in types if t != "gemeubileerd"]
+    def scrape(
+        self,
+        stad: str,
+        min_prijs: int,
+        max_prijs: int,
+        types: list[str],
+        radius_km: int | None = None,
+    ) -> list[dict]:
+        stad_slug = stad.lower().replace(" ", "-")
+        scraped_at = datetime.utcnow().isoformat()
 
-    # Geen filter ingesteld → standaard appartement, studio, anti-kraak
-    if not scrape_types:
-        scrape_types = ["appartement", "studio", "anti-kraak"]
+        gemeubileerd_filter = "gemeubileerd" in types
+        scrape_types = [t for t in types if t != "gemeubileerd"]
 
-    urls_to_scrape = []
-    for type_woning in scrape_types:
-        segment = TYPE_SEGMENT.get(type_woning)
-        if not segment:
-            print(f"[kamernet] ⚠️ Onbekend type: {type_woning}, overgeslagen", flush=True)
-            continue
-        url = f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
-        if radius_km:
-            url += f"&radius={radius_km}"
-        if gemeubileerd_filter:
-            url += "&furnishing=furnished"
-        urls_to_scrape.append(url)
+        # Geen filter ingesteld → standaard appartement, studio, anti-kraak
+        if not scrape_types:
+            scrape_types = ["appartement", "studio", "anti-kraak"]
 
-    all_listings: list[dict] = []
-    seen_urls: set[str] = set()
+        urls_to_scrape = []
+        for type_woning in scrape_types:
+            segment = TYPE_SEGMENT.get(type_woning)
+            if not segment:
+                logger.warning(f"[{self.name}] Onbekend type: {type_woning}, overgeslagen")
+                continue
+            url = f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
+            if radius_km:
+                url += f"&radius={radius_km}"
+            if gemeubileerd_filter:
+                url += "&furnishing=furnished"
+            urls_to_scrape.append(url)
 
-    for url in urls_to_scrape:
-        print(f"[kamernet] Ophalen: {url}", flush=True)
-        html = _fetch(url)
-        if not html:
-            print(f"[kamernet] ⚠️ Geen HTML ontvangen voor {url}", flush=True)
-            continue
+        all_listings: list[dict] = []
+        seen_urls: set[str] = set()
 
-        listings = _parse_listings(html, stad)
-        for listing in listings:
-            if listing["url"] not in seen_urls:
-                seen_urls.add(listing["url"])
-                all_listings.append(listing)
+        for url in urls_to_scrape:
+            logger.info(f"[{self.name}] Ophalen: {url}")
+            html = _fetch(url)
+            if not html:
+                logger.warning(f"[{self.name}] Geen HTML ontvangen voor {url}")
+                continue
 
-    if all_listings:
-        print(f"[kamernet] ✅ {len(all_listings)} woningen gevonden voor {stad}", flush=True)
-    else:
-        print(f"[kamernet] ⚠️ 0 woningen gevonden voor {stad}", flush=True)
+            listings = _parse_listings(html, stad, scraped_at)
+            for listing in listings:
+                if listing["url"] not in seen_urls:
+                    seen_urls.add(listing["url"])
+                    all_listings.append(listing)
 
-    return all_listings
+        logger.info(f"[{self.name}] {len(all_listings)} woningen gevonden voor {stad}")
+        return all_listings
 
 
 if __name__ == "__main__":
-    # Testrun: python app/scrapers/kamernet.py
-    resultaten = scrape_kamernet(
-        stad="den-haag",
+    import sys
+    logging.basicConfig(level=logging.INFO)
+    stad = sys.argv[1] if len(sys.argv) > 1 else "den-haag"
+    scraper = KamernetScraper()
+    resultaten = scraper.scrape(
+        stad=stad,
         min_prijs=500,
         max_prijs=1500,
         types=["appartement", "studio"]

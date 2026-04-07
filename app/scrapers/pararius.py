@@ -1,6 +1,12 @@
 import re
+import logging
+from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
+
+from .base import BaseScraper
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.pararius.nl"
 FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
@@ -69,86 +75,107 @@ def _extract_image(item) -> str | None:
     return None
 
 
-def scrape_pararius(
-    stad: str = "den-haag",
-    min_prijs: int = 0,
-    max_prijs: int = 1200,
-    radius_km: int | None = None,
-) -> list[dict]:
+class ParariusScraper(BaseScraper):
+    name = "pararius"
+    robots_txt_compliant = True
+    request_delay_seconds = 2.0
+    uses_types = False  # Pararius-URL heeft geen type-filter; retourneert altijd alle typen
 
-    target_url = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
-    if radius_km:
-        target_url += f"/straal-{radius_km}"
+    def scrape(
+        self,
+        stad: str,
+        min_prijs: int,
+        max_prijs: int,
+        types: list[str],
+        radius_km: int | None = None,
+    ) -> list[dict]:
+        target_url = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
+        if radius_km:
+            target_url += f"/straal-{radius_km}"
 
-    try:
-        print(f"[pararius] Fetch via FlareSolverr: {target_url}")
+        try:
+            logger.info(f"[{self.name}] Fetch via FlareSolverr: {target_url}")
 
-        r = requests.post(
-            FLARESOLVERR_URL,
-            json={
-                "cmd": "request.get",
-                "url": target_url,
-                "maxTimeout": 60000
-            },
-            timeout=70
-        )
+            r = requests.post(
+                FLARESOLVERR_URL,
+                json={
+                    "cmd": "request.get",
+                    "url": target_url,
+                    "maxTimeout": 60000
+                },
+                timeout=70
+            )
 
-        data = r.json()
+            data = r.json()
 
-        if data.get("status") != "ok":
-            print(f"[pararius] FlareSolverr error: {data}")
+            if data.get("status") != "ok":
+                logger.error(f"[{self.name}] FlareSolverr error: {data}")
+                return []
+
+            html = data["solution"]["response"]
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Connection error: {e}")
             return []
 
-        html = data["solution"]["response"]
+        if "Just a moment" in html:
+            logger.warning(f"[{self.name}] Cloudflare blocking detected")
+            return []
 
-    except Exception as e:
-        print(f"[pararius] Connection error: {e}")
-        return []
+        soup = BeautifulSoup(html, "html.parser")
+        woningen = []
+        scraped_at = datetime.utcnow().isoformat()
 
-    if "Just a moment" in html:
-        print("[pararius] Cloudflare blocking detected")
-        return []
+        items = soup.select(
+            "section.listing-search-item, li.search-list__item--listing"
+        )
 
-    soup = BeautifulSoup(html, "html.parser")
-    woningen = []
+        if not items:
+            logger.warning(f"[{self.name}] geen listings gevonden")
+            logger.debug(html[:800])
+            return []
 
-    items = soup.select(
-        "section.listing-search-item, li.search-list__item--listing"
-    )
+        for item in items:
+            titel_el = item.select_one(".listing-search-item__title a")
+            prijs_el = item.select_one(".listing-search-item__price")
 
-    if not items:
-        print("[pararius] WARNING: geen listings gevonden")
-        print(html[:800])
-        return []
+            if not titel_el or not prijs_el:
+                continue
 
-    for item in items:
-        titel_el = item.select_one(".listing-search-item__title a")
-        prijs_el = item.select_one(".listing-search-item__price")
+            href = titel_el.get("href")
+            if not href:
+                continue
 
-        if not titel_el or not prijs_el:
-            continue
+            full_url = BASE_URL + href
 
-        href = titel_el.get("href")
-        if not href:
-            continue
+            woning = {
+                "source": "pararius",
+                "url": full_url,
+                "external_id": _extract_external_id(href),
+                "adres": titel_el.get_text(strip=True),
+                "stad": stad,
+                "prijs": _parse_prijs(prijs_el.get_text()),
+                "oppervlakte": _extract_oppervlakte(item),
+                "type_woning": None,
+                "foto_url": _extract_image(item),
+                "beschikbaar": _check_beschikbaar(item),
+                "scraped_at": scraped_at,
+                "omschrijving": None,
+                "rating": None,
+                "rating_details": None,
+            }
 
-        full_url = BASE_URL + href
+            woningen.append(woning)
 
-        woning = {
-            "source": "pararius",
-            "url": full_url,
-            "external_id": _extract_external_id(href),
-            "adres": titel_el.get_text(strip=True),
-            "stad": stad,
-            "prijs": _parse_prijs(prijs_el.get_text()),
-            "oppervlakte": _extract_oppervlakte(item),
-            "type_woning": None,
-            "beschikbaar": _check_beschikbaar(item),
-            "foto_url": _extract_image(item),
-        }
+        logger.info(f"[{self.name}] gevonden: {len(woningen)} woningen")
+        return woningen
 
-        woningen.append(woning)
 
-    print(f"[pararius] gevonden: {len(woningen)} woningen")
-
-    return woningen
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.INFO)
+    stad = sys.argv[1] if len(sys.argv) > 1 else "den-haag"
+    scraper = ParariusScraper()
+    resultaten = scraper.scrape(stad=stad, min_prijs=500, max_prijs=1500, types=[])
+    for w in resultaten:
+        print(w)

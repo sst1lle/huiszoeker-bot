@@ -6,6 +6,14 @@
     <h1>Beschikbare woningen</h1>
     <p>{{ totaal }} woningen gevonden &middot; {{ filter_info }}</p>
   </div>
+
+  <div class="filter-bar">
+    <span class="filter-label">Online sinds:</span>
+    {% for val, label in leeftijd_opties %}
+    <a href="?leeftijd={{ val }}" class="filter-pill {{ 'active' if leeftijd == val else '' }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
   <div class="grid">
     {% if listings %}
       {% for l in listings %}
@@ -16,6 +24,7 @@
       {% set opp = l.oppervlakte %}
       {% set source = l.source or '' %}
       {% set url = l.url or '#' %}
+      {% set leeftijd_info = listing_leeftijd(l.eerste_gezien) %}
       <div class="card">
         <a href="{{ url }}" target="_blank" rel="noopener">
           {% if foto %}
@@ -33,6 +42,9 @@
           </div>
           <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
           {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}
+          <div class="age-line {{ leeftijd_info.klasse }}">
+            {{ leeftijd_info.emoji }} Online sinds {{ fmt_datum_kort(l.eerste_gezien) }} · {{ leeftijd_info.label }}
+          </div>
           <a href="{{ url }}" target="_blank" rel="noopener" class="card-link">Bekijk woning &rarr;</a>
         </div>
       </div>
@@ -47,15 +59,15 @@
   </div>
   {% if totaal_paginas > 1 %}
   <div class="pager">
-    {% if page > 1 %}<a href="?page={{ page - 1 }}">&lsaquo;</a>{% endif %}
+    {% if page > 1 %}<a href="?page={{ page - 1 }}&leeftijd={{ leeftijd }}">&lsaquo;</a>{% endif %}
     {% for p in range(1, totaal_paginas + 1) %}
       {% if p == page %}
       <span class="cur">{{ p }}</span>
       {% else %}
-      <a href="?page={{ p }}">{{ p }}</a>
+      <a href="?page={{ p }}&leeftijd={{ leeftijd }}">{{ p }}</a>
       {% endif %}
     {% endfor %}
-    {% if page < totaal_paginas %}<a href="?page={{ page + 1 }}">&rsaquo;</a>{% endif %}
+    {% if page < totaal_paginas %}<a href="?page={{ page + 1 }}&leeftijd={{ leeftijd }}">&rsaquo;</a>{% endif %}
   </div>
   {% endif %}
 </div>

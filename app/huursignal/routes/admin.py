@@ -78,3 +78,27 @@ def api_admin_user_delete(user_id):
     db = get_db()
     db.auth.admin.delete_user(user_id)  # cascades naar user_preferences en sent_notifications
     return jsonify({"ok": True})
+
+
+@admin_bp.route("/admin/scrapers")
+@admin_required
+def admin_scrapers():
+    db = get_db()
+    configs = db.table("scraper_config").select("*").order("name").execute().data or []
+    return render_template("admin_scrapers.html", scrapers=configs)
+
+
+@admin_bp.route("/api/admin/scrapers/<name>", methods=["POST"])
+@admin_required
+def api_admin_scraper_toggle(name):
+    data = request.json or {}
+    enabled = bool(data.get("enabled", True))
+    db = get_db()
+
+    bestaand = db.table("scraper_config").select("name").eq("name", name).execute()
+    if bestaand.data:
+        db.table("scraper_config").update({"enabled": enabled}).eq("name", name).execute()
+    else:
+        db.table("scraper_config").insert({"name": name, "enabled": enabled}).execute()
+
+    return jsonify({"ok": True, "name": name, "enabled": enabled})

@@ -1,9 +1,17 @@
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, session, redirect, url_for, request, render_template
 
 from db import get_db
 from ..decorators import login_required
 
 dash_bp = Blueprint("dash", __name__)
+
+LEEFTIJD_OPTIES = [
+    ("", "Alles"),
+    ("1", "Vandaag"),
+    ("3", "Laatste 3 dagen"),
+    ("7", "Laatste week"),
+]
 
 
 @dash_bp.route("/dashboard")
@@ -19,6 +27,7 @@ def dashboard():
         return redirect(url_for("pref.onboarding"))
 
     page     = request.args.get("page", 1, type=int)
+    leeftijd = request.args.get("leeftijd", "", type=str)
     per_page = 20
     offset   = (page - 1) * per_page
 
@@ -27,16 +36,20 @@ def dashboard():
     max_prijs = pref.get("max_prijs") or 9999
     types     = pref.get("type_woning") or []
 
-    result = (db.table("listings")
-              .select("*", count="exact")
-              .eq("stad", stad)
-              .eq("beschikbaar", True)
-              .gte("prijs", min_prijs)
-              .lte("prijs", max_prijs)
-              .order("eerste_gezien", desc=True)
-              .range(offset, offset + per_page - 1)
-              .execute())
+    query = (db.table("listings")
+               .select("*", count="exact")
+               .eq("stad", stad)
+               .eq("beschikbaar", True)
+               .gte("prijs", min_prijs)
+               .lte("prijs", max_prijs)
+               .order("eerste_gezien", desc=True)
+               .range(offset, offset + per_page - 1))
 
+    if leeftijd in ("1", "3", "7"):
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(leeftijd))).isoformat()
+        query = query.gte("eerste_gezien", cutoff)
+
+    result = query.execute()
     raw    = result.data or []
     totaal = result.count or 0
 
@@ -46,9 +59,9 @@ def dashboard():
 
     totaal_paginas = max(1, (totaal + per_page - 1) // per_page)
 
-    filter_info = f"{stad} \u00b7 \u20ac\u00a0{min_prijs}\u2013{max_prijs}/maand"
+    filter_info = f"{stad} · €\u00a0{min_prijs}–{max_prijs}/maand"
     if types:
-        filter_info += " \u00b7 " + ", ".join(types)
+        filter_info += " · " + ", ".join(types)
 
     return render_template(
         "dashboard.html",
@@ -57,4 +70,6 @@ def dashboard():
         filter_info=filter_info,
         page=page,
         totaal_paginas=totaal_paginas,
+        leeftijd=leeftijd,
+        leeftijd_opties=LEEFTIJD_OPTIES,
     )

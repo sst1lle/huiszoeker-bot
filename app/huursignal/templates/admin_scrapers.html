@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Scraper beheer — Huursignal{% endblock %}
+{% block content %}
+<div class="container">
+  <div class="page-head">
+    <h1>Scraper beheer</h1>
+    <p>{{ scrapers|length }} scraper(s) geregistreerd &middot; <a href="/admin" style="color:#2563eb">← Gebruikersbeheer</a></p>
+  </div>
+
+  {% if scrapers %}
+  <div class="scraper-list">
+    {% for s in scrapers %}
+    <div class="scraper-row">
+      <div>
+        <div class="scraper-name">{{ s.name }}</div>
+        <div class="scraper-meta">
+          {% if s.enabled %}
+            <span style="color:#166534">● Actief</span>
+          {% else %}
+            <span style="color:#b91c1c">● Uitgeschakeld</span>
+          {% endif %}
+          &middot;
+          {% if s.last_run %}
+            laatste run {{ s.last_run[:16].replace('T', ' ') }}
+            &middot; {{ s.last_count or 0 }} listings
+          {% else %}
+            nog niet gedraaid
+          {% endif %}
+        </div>
+      </div>
+      <div class="toggle-wrap">
+        <span style="font-size:13px;color:var(--muted)" id="lbl-{{ s.name }}">
+          {{ 'Aan' if s.enabled else 'Uit' }}
+        </span>
+        <label class="toggle" title="{{ 'Uitschakelen' if s.enabled else 'Inschakelen' }}">
+          <input type="checkbox" {{ 'checked' if s.enabled else '' }}
+                 onchange="toggleScraper('{{ s.name }}', this)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="icon">🤖</div>
+    <h2>Geen scrapers geregistreerd</h2>
+    <p>Scrapers worden automatisch geregistreerd bij de eerste botstart.</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+async function toggleScraper(name, checkbox) {
+  const enabled = checkbox.checked;
+  const lbl = document.getElementById('lbl-' + name);
+  try {
+    const r = await fetch('/api/admin/scrapers/' + name, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      lbl.textContent = enabled ? 'Aan' : 'Uit';
+    } else {
+      checkbox.checked = !enabled; // terugdraaien bij fout
+    }
+  } catch {
+    checkbox.checked = !enabled;
+  }
+}
+</script>
+{% endblock %}

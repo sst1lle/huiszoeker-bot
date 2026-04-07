@@ -7,3 +7,6 @@ gunicorn==21.2.0
 supabase==2.7.4
 gotrue==2.7.0
 httpx>=0.24.1,<0.28.0
+duckdb>=0.10.0
+pandas>=2.0.0
+pyarrow>=14.0.0

@@ -1,20 +1,52 @@
 import os
 import time
 import asyncio
+import importlib
+import inspect
+import pkgutil
 import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
 
 from db import get_db
-from scrapers.pararius import scrape_pararius
-from scrapers.kamernet import scrape_kamernet
+from scrapers.base import BaseScraper
+from deduplicator import Deduplicator
+from storage import ListingStorage
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 load_dotenv()
 
 INTERVAL = 15 * 60
 VALIDATIE_INTERVAL_UREN = 6
+
+
+def load_scrapers() -> list:
+    """
+    Auto-discover alle BaseScraper subklassen in app/scrapers/.
+
+    Nieuwe scraper toevoegen = nieuw bestand droppen in app/scrapers/ met een
+    klasse die BaseScraper erft. main.py hoeft nooit gewijzigd te worden.
+
+    base.py wordt overgeslagen. Laadfouten worden gelogd maar stoppen de bot niet.
+    """
+    import scrapers as scrapers_pkg
+
+    gevonden = []
+    for _, module_name, _ in pkgutil.iter_modules(scrapers_pkg.__path__):
+        if module_name == "base":
+            continue
+        try:
+            module = importlib.import_module(f"scrapers.{module_name}")
+        except Exception as e:
+            print(f"[scrapers] Kon '{module_name}' niet laden: {e}", flush=True)
+            continue
+        for _, cls in inspect.getmembers(module, inspect.isclass):
+            if issubclass(cls, BaseScraper) and cls is not BaseScraper:
+                gevonden.append(cls())
+
+    print(f"[scrapers] {len(gevonden)} scraper(s) geladen: {[s.name for s in gevonden]}", flush=True)
+    return gevonden
 
 
 async def stuur_telegram(chat_id: str, bericht: str):
@@ -98,7 +130,98 @@ def upsert_listing(listing: dict) -> str | None:
     return result.data[0]["id"] if result.data else None
 
 
-def zoek_nieuwe_voor_user(pref: dict) -> list[dict]:
+def registreer_scrapers(scrapers: list) -> None:
+    """
+    Registreer ontdekte scrapers in scraper_config als ze er nog niet instaan.
+    Wordt eenmalig aangeroepen bij botstart — zorgt dat /admin/scrapers ze toont.
+    """
+    try:
+        db = get_db()
+        bestaand = {c["name"] for c in (db.table("scraper_config").select("name").execute().data or [])}
+        for s in scrapers:
+            if s.name not in bestaand:
+                db.table("scraper_config").insert({"name": s.name, "enabled": True}).execute()
+                print(f"[scrapers] Geregistreerd in scraper_config: {s.name}", flush=True)
+    except Exception as e:
+        print(f"[scrapers] Kon scrapers niet registreren: {e}", flush=True)
+
+
+def update_scraper_stats(counts: dict) -> None:
+    """
+    Schrijf last_run en last_count terug naar scraper_config na elke scrape-ronde.
+    counts: {scraper_name: total_listings_found}
+    """
+    if not counts:
+        return
+    nu = datetime.now(timezone.utc).isoformat()
+    try:
+        db = get_db()
+        for name, count in counts.items():
+            db.table("scraper_config").update({
+                "last_run":   nu,
+                "last_count": count,
+            }).eq("name", name).execute()
+    except Exception as e:
+        print(f"[scrapers] Kon scraper stats niet opslaan: {e}", flush=True)
+
+
+def get_enabled_scrapers(all_scrapers: list) -> list:
+    """
+    Filtert scrapers op basis van scraper_config in Supabase.
+    Wordt elke loop aangeroepen zodat toggles zonder herstart ingaan.
+    Bij DB-fout: alle scrapers actief (fail-open).
+    """
+    try:
+        db = get_db()
+        configs = db.table("scraper_config").select("name, enabled").execute().data or []
+        config_map = {c["name"]: c["enabled"] for c in configs}
+        enabled = [s for s in all_scrapers if config_map.get(s.name, True)]
+        uitgeschakeld = [s.name for s in all_scrapers if not config_map.get(s.name, True)]
+        if uitgeschakeld:
+            print(f"[scrapers] Uitgeschakeld via config: {uitgeschakeld}", flush=True)
+        return enabled
+    except Exception as e:
+        print(f"[scrapers] Fout bij laden scraper_config: {e} — alle scrapers actief", flush=True)
+        return all_scrapers
+
+
+def bouw_combis(scrapers: list, prefs: list) -> dict:
+    """
+    Bouw unieke parameter-combinaties per scraper op basis van gebruikersvoorkeuren.
+
+    Sleutel: {scraper.name}-{stad}-{min}-{max}-{types}-r{radius}
+    Als scraper.uses_types=False wordt het types-deel weggelaten — de scraper
+    retourneert toch altijd alle typen (bijv. Pararius).
+
+    Toevoegen van een nieuwe scraper vereist geen aanpassing hier.
+    """
+    combis = {}
+    for scraper in scrapers:
+        for pref in prefs:
+            stad = (pref.get("stad") or "").strip()
+            if not stad:
+                continue
+            min_p = pref.get("min_prijs") or 0
+            max_p = pref.get("max_prijs") or 1500
+            types = pref.get("type_woning") or []
+            radius = pref.get("radius_km") or None
+
+            types_deel = "" if not scraper.uses_types else ",".join(sorted(types))
+            key = f"{scraper.name}-{stad}-{min_p}-{max_p}-{types_deel}-r{radius}"
+
+            if key not in combis:
+                combis[key] = {
+                    "scraper": scraper,
+                    "stad": stad,
+                    "min_prijs": min_p,
+                    "max_prijs": max_p,
+                    "types": types,
+                    "radius_km": radius,
+                }
+    return combis
+
+
+def zoek_nieuwe_voor_user(pref: dict) -> list:
     """Haal listings op die matchen met de voorkeur en nog niet verstuurd zijn."""
     db = get_db()
     user_id = pref.get("user_id")
@@ -155,7 +278,7 @@ def maak_bericht(listing: dict) -> str:
     return "\n".join(regels)
 
 
-async def verwerk_notificaties(prefs: list[dict]) -> int:
+async def verwerk_notificaties(prefs: list) -> int:
     db = get_db()
     gestuurd = 0
 
@@ -187,6 +310,14 @@ async def verwerk_notificaties(prefs: list[dict]) -> int:
 if __name__ == '__main__':
     print("🏠 Huiszoekerbot gestart", flush=True)
 
+    alle_scrapers = load_scrapers()
+    if not alle_scrapers:
+        print("[main] ❌ Geen scrapers gevonden — stop.", flush=True)
+        exit(1)
+
+    registreer_scrapers(alle_scrapers)
+    storage = ListingStorage()
+
     while True:
         try:
             # ── 1. VALIDATIE ──────────────────────────────────────────────────
@@ -203,56 +334,49 @@ if __name__ == '__main__':
 
             print(f"[main] {len(prefs)} gebruiker(s) actief", flush=True)
 
-            # Dedupliceer scrape-combinaties: elke unieke stad+prijs slechts één keer scrapen
-            pararius_combis: dict[str, dict] = {}
-            kamernet_combis: dict[str, dict] = {}
+            scrapers = get_enabled_scrapers(alle_scrapers)
+            if not scrapers:
+                print("[main] Alle scrapers uitgeschakeld — notificaties worden nog wel verwerkt.", flush=True)
 
-            for pref in prefs:
-                stad = (pref.get("stad") or "").strip()
-                min_p = pref.get("min_prijs") or 0
-                max_p = pref.get("max_prijs") or 1500
-                types = pref.get("type_woning") or []
-                radius = pref.get("radius_km") or None
+            combis = bouw_combis(scrapers, prefs)
+            alle_woningen = []
+            counts_per_scraper: dict = {}  # scraper.name → totaal gevonden listings
 
-                p_key = f"{stad}-{min_p}-{max_p}-r{radius}"
-                if p_key not in pararius_combis:
-                    pararius_combis[p_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "radius_km": radius}
-
-                k_key = f"{stad}-{min_p}-{max_p}-{','.join(sorted(types))}-r{radius}"
-                if k_key not in kamernet_combis:
-                    kamernet_combis[k_key] = {"stad": stad, "min_prijs": min_p, "max_prijs": max_p, "types": types, "radius_km": radius}
-
-            totaal = 0
-
-            for params in pararius_combis.values():
-                woningen = scrape_pararius(
-                    stad=params["stad"],
-                    min_prijs=params["min_prijs"],
-                    max_prijs=params["max_prijs"],
-                    radius_km=params["radius_km"],
-                )
-                if not woningen:
-                    asyncio.run(stuur_warning(
-                        f"⚠️ Pararius gaf 0 resultaten!\n"
-                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}"
-                    ))
-                for w in woningen:
-                    upsert_listing(w)
-                    totaal += 1
-
-            for params in kamernet_combis.values():
-                woningen = scrape_kamernet(
+            for params in combis.values():
+                scraper = params["scraper"]
+                woningen = scraper.scrape(
                     stad=params["stad"],
                     min_prijs=params["min_prijs"],
                     max_prijs=params["max_prijs"],
                     types=params["types"],
                     radius_km=params["radius_km"],
                 )
-                for w in woningen:
-                    upsert_listing(w)
-                    totaal += 1
+                if not woningen:
+                    asyncio.run(stuur_warning(
+                        f"⚠️ {scraper.name} gaf 0 resultaten!\n"
+                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}"
+                    ))
+                alle_woningen.extend(woningen)
+                counts_per_scraper[scraper.name] = counts_per_scraper.get(scraper.name, 0) + len(woningen)
 
-            print(f"[main] {totaal} listings verwerkt", flush=True)
+            update_scraper_stats(counts_per_scraper)
+
+            uniek = Deduplicator().deduplicate(alle_woningen)
+            duplicaten = len(alle_woningen) - len(uniek)
+            if duplicaten:
+                print(f"[main] {duplicaten} cross-site duplicaat/duplicaten verwijderd", flush=True)
+
+            # Sla snapshot op in Parquet (historische data / DuckDB queries)
+            storage.save_listings(uniek)
+
+            # Upsert in Supabase (notificaties en gebruikersmatching)
+            totaal = sum(1 for w in uniek if upsert_listing(w))
+
+            print(
+                f"[main] {totaal} listings verwerkt "
+                f"({len(alle_woningen)} gevonden, {duplicaten} duplicaten)",
+                flush=True
+            )
 
             # ── 3. NOTIFICATIES ───────────────────────────────────────────────
             gestuurd = asyncio.run(verwerk_notificaties(prefs))
