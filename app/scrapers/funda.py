@@ -92,19 +92,27 @@ class FundaScraper(BaseScraper):
 
         # ── DEBUG ─────────────────────────────────────────────────────────────
         print(f"[funda debug] HTML lengte: {len(html)}", flush=True)
-        print(f"[funda debug] Eerste 1000 chars:\n{html[:1000]}", flush=True)
-        has_next_data = "__NEXT_DATA__" in html
-        print(f"[funda debug] __NEXT_DATA__ aanwezig: {has_next_data}", flush=True)
-        if has_next_data:
-            soup = BeautifulSoup(html, "html.parser")
-            script = soup.find("script", {"id": "__NEXT_DATA__"})
-            if script:
-                try:
-                    nd = json.loads(script.string)
-                    page_props = nd.get("props", {}).get("pageProps", {})
-                    print(f"[funda debug] pageProps keys: {list(page_props.keys())}", flush=True)
-                except Exception as ex:
-                    print(f"[funda debug] JSON parse fout: {ex}", flush=True)
+
+        # Nuxt.js patronen (Funda migreerde van Next.js naar Nuxt.js)
+        for marker in ("__NUXT__", "__NUXT_DATA__", "useNuxtApp", "nuxt-island", "nuxtApp"):
+            print(f"[funda debug] '{marker}' aanwezig: {marker in html}", flush=True)
+
+        # Alle <script> tags met een id of type=application/json
+        soup = BeautifulSoup(html, "html.parser")
+        script_tags = soup.find_all("script", id=True)
+        print(f"[funda debug] <script id=...> tags: {[s['id'] for s in script_tags]}", flush=True)
+
+        json_scripts = soup.find_all("script", {"type": "application/json"})
+        print(f"[funda debug] <script type=application/json> count: {len(json_scripts)}", flush=True)
+        for i, s in enumerate(json_scripts[:3]):
+            txt = (s.string or "")[:200]
+            print(f"[funda debug] json_script[{i}]: {txt}", flush=True)
+
+        # Hoeveel listing-URLs zitten er in de HTML?
+        listing_urls = re.findall(r'/huur/[a-z-]+/[a-z-]+-\d{7,9}-[^"\'>\s]+', html)
+        print(f"[funda debug] listing URL matches: {len(listing_urls)}", flush=True)
+        if listing_urls:
+            print(f"[funda debug] eerste listing URL: {listing_urls[0]}", flush=True)
         # ── /DEBUG ────────────────────────────────────────────────────────────
 
         # Probeer __NEXT_DATA__ eerst; val terug op HTML-parse
