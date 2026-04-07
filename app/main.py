@@ -262,6 +262,8 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
     for listing in listings:
         if listing["id"] in al_gestuurd:
             continue
+        if "parkeergelegenheid" in (listing.get("url") or ""):
+            continue
         source = listing.get("source", "")
         if source not in _SKIP_TYPE_CHECK:
             listing_type = listing.get("type_woning")
