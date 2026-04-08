@@ -36,9 +36,7 @@
         <div class="card-body">
           <div class="card-top">
             <div class="card-adres">{{ adres }}{% if stad_l %}, {{ stad_l }}{% endif %}</div>
-            <span class="badge {{ 'badge-pararius' if source == 'pararius' else 'badge-kamernet' }}">
-              {{ 'Pararius' if source == 'pararius' else 'Kamernet' }}
-            </span>
+            <span class="badge badge-{{ source or 'onbekend' }}">{{ (source or 'onbekend')|title }}</span>
           </div>
           <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
           {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}

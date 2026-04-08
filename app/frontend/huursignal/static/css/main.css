@@ -93,6 +93,7 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
          margin-left: 8px; white-space: nowrap; flex-shrink: 0; }
 .badge-pararius { background: #fff3e0; color: #c2410c; }
 .badge-kamernet  { background: #ecfdf5; color: #065f46; }
+.badge-funda     { background: #eff6ff; color: #1d4ed8; }
 .card-prijs { font-size: 19px; font-weight: 700; color: #2563eb; margin-bottom: 6px; }
 .card-meta { font-size: 12px; color: var(--muted); }
 .card-link { display: inline-block; margin-top: 10px; font-size: 13px; color: #2563eb; }
