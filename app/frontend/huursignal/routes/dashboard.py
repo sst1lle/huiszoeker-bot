@@ -38,7 +38,7 @@ def dashboard():
 
     query = (db.table("listings")
                .select("*", count="exact")
-               .ilike("stad", stad.replace("-", " "))
+               .eq("stad", stad)
                .eq("beschikbaar", True)
                .gte("prijs", min_prijs)
                .lte("prijs", max_prijs)
