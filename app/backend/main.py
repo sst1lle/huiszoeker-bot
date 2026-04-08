@@ -248,7 +248,7 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
     # Listings ophalen op stad + prijsrange
     listings = (db.table("listings")
                 .select("*")
-                .eq("stad", stad)
+                .ilike("stad", stad.replace("-", " "))
                 .eq("beschikbaar", True)
                 .gte("prijs", min_prijs)
                 .lte("prijs", max_prijs)
