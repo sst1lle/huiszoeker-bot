@@ -248,7 +248,7 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
     # Listings ophalen op stad + prijsrange
     listings = (db.table("listings")
                 .select("*")
-                .ilike("stad", stad.replace("-", " "))
+                .eq("stad", stad)
                 .eq("beschikbaar", True)
                 .gte("prijs", min_prijs)
                 .lte("prijs", max_prijs)
@@ -416,7 +416,12 @@ if __name__ == '__main__':
             import traceback
             traceback.print_exc()
             try:
-                asyncio.run(stuur_warning(f"❌ Huiszoekerbot fout:\n{e}"))
+                err = str(e)
+                if "502" in err or "Bad gateway" in err.lower():
+                    warning = "⚠️ Supabase tijdelijk onbereikbaar (502). Loop hervat automatisch."
+                else:
+                    warning = f"❌ Fout in loop:\n{err[:300]}"
+                asyncio.run(stuur_warning(warning))
             except Exception:
                 pass
 
