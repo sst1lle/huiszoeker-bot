@@ -19,7 +19,7 @@ services:
       - PYTHONPATH=/app/backend:/app
     volumes:
       - ./data:/app/data
-      - /mnt/ssd/huursignal/datalake:/app/datalake
+      - ${DATA_DIR:-/mnt/ssd}/huursignal/datalake:/app/datalake
     shm_size: 512m
     depends_on:
       - flaresolverr
@@ -32,7 +32,7 @@ services:
       - '5000:5000'
     volumes:
       - ./data:/app/data
-      - /mnt/ssd/huursignal/datalake:/app/datalake
+      - ${DATA_DIR:-/mnt/ssd}/huursignal/datalake:/app/datalake
     env_file:
       - .env
     environment:
