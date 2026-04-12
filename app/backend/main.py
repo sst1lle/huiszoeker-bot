@@ -417,8 +417,9 @@ if __name__ == '__main__':
             traceback.print_exc()
             try:
                 err = str(e)
-                if "502" in err or "Bad gateway" in err.lower():
-                    warning = "⚠️ Supabase tijdelijk onbereikbaar (502). Loop hervat automatisch."
+                _TRANSIENT = {"502", "503", "504", "520", "521", "522", "524"}
+                if any(code in err for code in _TRANSIENT) or "bad gateway" in err.lower() or "JSON could not be generated" in err:
+                    warning = f"⚠️ Supabase tijdelijk onbereikbaar. Loop hervat automatisch.\n{err[:200]}"
                 else:
                     warning = f"❌ Fout in loop:\n{err[:300]}"
                 asyncio.run(stuur_warning(warning))
