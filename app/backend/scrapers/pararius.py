@@ -1,7 +1,6 @@
 import re
 import logging
 from datetime import datetime
-import requests
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
@@ -9,7 +8,6 @@ from .base import BaseScraper
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.pararius.nl"
-FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 
 def _parse_prijs(text: str) -> int | None:
@@ -80,6 +78,7 @@ class ParariusScraper(BaseScraper):
     robots_txt_compliant = True
     request_delay_seconds = 2.0
     uses_types = False  # Pararius-URL heeft geen type-filter; retourneert altijd alle typen
+    flaresolverr_only = True
 
     def scrape(
         self,
@@ -93,29 +92,11 @@ class ParariusScraper(BaseScraper):
         if radius_km:
             target_url += f"/straal-{radius_km}"
 
+        logger.info(f"[{self.name}] Fetch via FlareSolverr: {target_url}")
         try:
-            logger.info(f"[{self.name}] Fetch via FlareSolverr: {target_url}")
-
-            r = requests.post(
-                FLARESOLVERR_URL,
-                json={
-                    "cmd": "request.get",
-                    "url": target_url,
-                    "maxTimeout": 60000
-                },
-                timeout=70
-            )
-
-            data = r.json()
-
-            if data.get("status") != "ok":
-                logger.error(f"[{self.name}] FlareSolverr error: {data}")
-                return []
-
-            html = data["solution"]["response"]
-
-        except Exception as e:
-            logger.error(f"[{self.name}] Connection error: {e}")
+            html = self.flare_get(target_url)
+        except RuntimeError as e:
+            logger.error(f"[{self.name}] {e}")
             return []
 
         if "Just a moment" in html:

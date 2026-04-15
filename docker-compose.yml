@@ -6,9 +6,13 @@ services:
     restart: unless-stopped
     environment:
       - LOG_LEVEL=info
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
     networks:
       - huiszoeker_default
-      - arr-stack_default
 
   huiszoeker:
     build: .

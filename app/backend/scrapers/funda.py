@@ -2,7 +2,6 @@ import re
 import json
 import logging
 from datetime import datetime
-import requests
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
@@ -10,7 +9,6 @@ from .base import BaseScraper
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.funda.nl"
-FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 _SLUG_PREFIXES = {
     "appartement", "huis", "studio", "kamer", "woning", "parkeergelegenheid",
@@ -78,6 +76,7 @@ class FundaScraper(BaseScraper):
     robots_txt_compliant = True
     request_delay_seconds = 5.0
     uses_types = False
+    flaresolverr_only = True
 
     FUNDA_TYPE_MAP = {
         "apartment": "appartement",
@@ -104,20 +103,7 @@ class FundaScraper(BaseScraper):
             f"&price=%22-{max_prijs}%22"
         )
         logger.debug(f"[{self.name}] FlareSolverr: {url}")
-        try:
-            r = requests.post(FLARESOLVERR_URL, json={
-                "cmd": "request.get",
-                "url": url,
-                "maxTimeout": 60000,
-            }, timeout=70)
-            data = r.json()
-            if data.get("status") != "ok":
-                raise RuntimeError(f"FlareSolverr fout: {data.get('message')}")
-            html = data["solution"]["response"]
-        except RuntimeError:
-            raise
-        except Exception as e:
-            raise RuntimeError(f"FlareSolverr verbindingsfout: {e}") from e
+        html = self.flare_get(url)  # raises RuntimeError on failure
 
         if len(html) < 1000:
             raise RuntimeError(f"FlareSolverr HTML te klein ({len(html)} bytes) — mogelijk geblokkeerd")

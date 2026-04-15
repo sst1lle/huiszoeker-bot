@@ -1,7 +1,6 @@
 import re
 import logging
 from datetime import datetime
-import requests
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
@@ -9,7 +8,6 @@ from .base import BaseScraper
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://kamernet.nl"
-FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
 
 # Mapping van type_woning naar Kamernet URL-segment
 TYPE_SEGMENT = {
@@ -30,38 +28,6 @@ _TYPE_NL = {
     "anti-squat": "anti-kraak",
 }
 
-
-def _fetch(url: str) -> str | None:
-    """Probeer eerst direct; val terug op FlareSolverr bij blokkade."""
-    # Stap 1: direct request
-    try:
-        r = requests.get(url, timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-        if r.status_code == 200 and "Just a moment" not in r.text:
-            logger.info("[kamernet] Direct request gelukt")
-            return r.text
-        logger.warning(f"[kamernet] Direct request geblokkeerd (status {r.status_code}), probeer FlareSolverr...")
-    except Exception as e:
-        logger.warning(f"[kamernet] Direct request mislukt ({e}), probeer FlareSolverr...")
-
-    # Stap 2: FlareSolverr fallback
-    try:
-        r = requests.post(FLARESOLVERR_URL, json={
-            "cmd": "request.get",
-            "url": url,
-            "maxTimeout": 60000
-        }, timeout=70)
-        data = r.json()
-        status = data.get("status")
-        logger.info(f"[kamernet] FlareSolverr status: {status}")
-        if status == "ok":
-            return data["solution"]["response"]
-        logger.warning(f"[kamernet] FlareSolverr fout: {data.get('message')}")
-    except Exception as e:
-        logger.error(f"[kamernet] FlareSolverr verbindingsfout: {e}")
-
-    return None
 
 
 def _parse_prijs(text: str) -> int | None:
@@ -202,9 +168,10 @@ class KamernetScraper(BaseScraper):
 
         for url in urls_to_scrape:
             logger.info(f"[{self.name}] Ophalen: {url}")
-            html = _fetch(url)
-            if not html:
-                logger.warning(f"[{self.name}] Geen HTML ontvangen voor {url}")
+            try:
+                html = self.flare_get(url)
+            except RuntimeError as e:
+                logger.warning(f"[{self.name}] Geen HTML ontvangen voor {url}: {e}")
                 continue
 
             listings = _parse_listings(html, stad, scraped_at)

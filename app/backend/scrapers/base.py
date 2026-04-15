@@ -1,9 +1,14 @@
 import time
 import logging
+import threading
+import requests
 from abc import ABC, abstractmethod
 from queue import Queue
 
 logger = logging.getLogger(__name__)
+
+_FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 
 class BaseScraper(ABC):
@@ -44,6 +49,76 @@ class BaseScraper(ABC):
     robots_txt_compliant: bool = True  # documenteer per subklasse
     request_delay_seconds: float = 2.0  # ethisch scrapen
     uses_types: bool = True  # False als scraper types intern negeert (bijv. Pararius geeft altijd alle typen)
+    flaresolverr_only: bool = False  # True als directe requests altijd geblokkeerd zijn (Funda, Pararius)
+
+    # Per-loop URL → HTML cache (class-level = gedeeld tussen alle scraper instanties)
+    _cache: dict = {}
+    _cache_lock: threading.Lock = threading.Lock()
+    _stats: dict = {"direct": 0, "flare": 0, "cache": 0}
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Leeg de URL-cache en reset statistieken. Aanroepen aan het begin van elke loop-iteratie."""
+        with cls._cache_lock:
+            BaseScraper._cache.clear()
+            BaseScraper._stats = {"direct": 0, "flare": 0, "cache": 0}
+
+    @classmethod
+    def flare_get(cls, url: str) -> str:
+        """
+        Haal HTML op met intelligente fallback en per-loop URL-caching.
+
+        Volgorde:
+        1. Cache check — geeft gecachede HTML terug als beschikbaar
+        2. Direct request — tenzij cls.flaresolverr_only=True
+        3. FlareSolverr fallback — bij 403/429/Cloudflare detectie of verbindingsfout
+
+        Thread-safe via double-checked locking.
+        Raises RuntimeError als zowel direct als FlareSolverr mislukken.
+        """
+        # Stap 1: cache check
+        with cls._cache_lock:
+            if url in BaseScraper._cache:
+                BaseScraper._stats["cache"] += 1
+                logger.debug(f"[cache] Hit: {url[:80]}")
+                return BaseScraper._cache[url]
+
+        # Stap 2: direct request (overgeslagen als scraper altijd geblokkeerd is)
+        if not cls.flaresolverr_only:
+            try:
+                r = requests.get(url, timeout=15, headers={"User-Agent": _UA})
+                if r.status_code == 200 and "Just a moment" not in r.text:
+                    html = r.text
+                    with cls._cache_lock:
+                        BaseScraper._stats["direct"] += 1
+                        if url not in BaseScraper._cache:
+                            BaseScraper._cache[url] = html
+                    return html
+                logger.debug(f"[cache] Direct geblokkeerd (HTTP {r.status_code}), FlareSolverr: {url[:60]}")
+            except Exception as e:
+                logger.debug(f"[cache] Direct request mislukt ({e}), FlareSolverr: {url[:60]}")
+
+        # Stap 3: FlareSolverr
+        try:
+            r = requests.post(_FLARESOLVERR_URL, json={
+                "cmd": "request.get",
+                "url": url,
+                "maxTimeout": 60000,
+            }, timeout=70)
+            data = r.json()
+            if data.get("status") != "ok":
+                raise RuntimeError(f"FlareSolverr fout: {data.get('message')}")
+            html = data["solution"]["response"]
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"FlareSolverr verbindingsfout: {e}") from e
+
+        with cls._cache_lock:
+            BaseScraper._stats["flare"] += 1
+            if url not in BaseScraper._cache:
+                BaseScraper._cache[url] = html
+        return html
 
     @abstractmethod
     def scrape(

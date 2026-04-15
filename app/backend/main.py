@@ -355,6 +355,7 @@ if __name__ == '__main__':
             if not scrapers:
                 print("[main] Alle scrapers uitgeschakeld — notificaties worden nog wel verwerkt.", flush=True)
 
+            BaseScraper.clear_cache()
             combis = bouw_combis(scrapers, prefs)
             alle_woningen = []
             counts_per_scraper: dict = {}  # scraper.name → totaal gevonden listings
@@ -381,6 +382,13 @@ if __name__ == '__main__':
                 counts_per_scraper[scraper.name] = counts_per_scraper.get(scraper.name, 0) + len(woningen)
 
             update_scraper_stats(counts_per_scraper)
+
+            _cs = BaseScraper._stats
+            print(
+                f"[cache] Direct: {_cs['direct']}, FlareSolverr: {_cs['flare']}, "
+                f"Cache hits: {_cs['cache']} (bespaard)",
+                flush=True
+            )
 
             uniek = Deduplicator().deduplicate(alle_woningen)
             duplicaten = len(alle_woningen) - len(uniek)
