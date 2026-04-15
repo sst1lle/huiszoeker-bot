@@ -20,10 +20,12 @@ def create_app():
     from .routes.dashboard import dash_bp
     from .routes.preferences import pref_bp
     from .routes.admin import admin_bp
+    from .routes.motivatiebrief import motivatiebrief_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dash_bp)
     app.register_blueprint(pref_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(motivatiebrief_bp)
 
     return app

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Motivatiebrief — Huursignal{% endblock %}
+{% block content %}
+<div class="form-page">
+  <h1>Motivatiebrief generator</h1>
+  <p class="sub">Vul je gegevens in en ontvang een kant-en-klare motivatiebrief voor je huurwoning.</p>
+
+  {% if error %}
+  <div class="err" style="display:block">{{ error }}</div>
+  {% endif %}
+
+  <div class="form-card">
+    <form method="POST" action="/motivatiebrief" id="mbForm">
+      <p class="section-label">Jouw gegevens</p>
+
+      <div class="field">
+        <label>Naam</label>
+        <input type="text" name="naam" value="{{ (form.naam if form else naam) or '' }}" placeholder="Je volledige naam">
+      </div>
+
+      <div class="field">
+        <label>Huidige woonsituatie</label>
+        <textarea name="woonsituatie" rows="2" placeholder="bijv. studeer in Utrecht, woon nu bij ouders">{{ form.woonsituatie if form else '' }}</textarea>
+      </div>
+
+      <div class="field">
+        <label>Reden voor verhuizing</label>
+        <textarea name="reden" rows="3" placeholder="Waarom wil je verhuizen?">{{ form.reden if form else '' }}</textarea>
+      </div>
+
+      <div class="field">
+        <label>Bijzonderheden over jezelf</label>
+        <textarea name="bijzonderheden" rows="2" placeholder="bijv. vast contract, geen huisdieren, geen kinderen">{{ form.bijzonderheden if form else '' }}</textarea>
+      </div>
+
+      <div class="field">
+        <label>Specifieke woning <span style="font-weight:400;color:#a1a1aa">(optioneel)</span></label>
+        <input type="text" name="woning" value="{{ form.woning if form else '' }}" placeholder="bijv. Lange Leidsestraat 12, Amsterdam">
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" style="width:auto" id="submitBtn">
+          Genereer motivatiebrief
+        </button>
+      </div>
+    </form>
+  </div>
+
+  {% if brief %}
+  <div class="mb-output">
+    <div class="mb-output-head">
+      <span class="section-label" style="margin:0">Gegenereerde brief</span>
+      <button class="btn btn-outline btn-sm" id="copyBtn" onclick="kopieerBrief()">
+        Kopieer naar klembord
+      </button>
+    </div>
+    <textarea id="briefOutput" class="mb-textarea" rows="12">{{ brief }}</textarea>
+    <p class="hint" style="margin-top:6px">Je kunt de brief hierboven nog aanpassen voor je hem verstuurt.</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+  document.getElementById('mbForm').addEventListener('submit', function () {
+    var btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Bezig met genereren…';
+  });
+
+  function kopieerBrief() {
+    var ta = document.getElementById('briefOutput');
+    navigator.clipboard.writeText(ta.value).then(function () {
+      var btn = document.getElementById('copyBtn');
+      btn.textContent = 'Gekopieerd!';
+      setTimeout(function () { btn.textContent = 'Kopieer naar klembord'; }, 2000);
+    });
+  }
+</script>
+{% endblock %}
