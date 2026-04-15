@@ -10,7 +10,8 @@ _SYSTEEM_PROMPT = (
     "Je bent een assistent die motivatiebrieven schrijft voor woningzoekers. "
     "Schrijf altijd in professioneel Nederlands. De brief mag maximaal 200 woorden zijn. "
     "Gebruik een vriendelijke maar formele toon. "
-    "Schrijf de brief direct, zonder uitleg of inleiding vooraf."
+    "Schrijf de brief direct, zonder uitleg of inleiding vooraf. "
+    "Maak de brief zo persoonlijk/menselijk mogelijk, zodat het niet lijkt dat het door een LLM is geschreven."
 )
 
 
@@ -67,7 +68,7 @@ def motivatiebrief():
         from groq import Groq
         client = Groq(api_key=api_key, timeout=30.0)
         response = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": _SYSTEEM_PROMPT},
                 {"role": "user", "content": gebruiker_prompt},
