@@ -46,7 +46,7 @@ Two processes share a single Docker image:
 
 ## Database
 
-Three tables in Supabase (schema in `supabase/schema.sql`):
+Four tables in Supabase (schema in `supabase/schema.sql`):
 
 - `user_preferences` — per-user search criteria + Telegram chat ID
 - `listings` — scraped listings with availability tracking
@@ -66,6 +66,7 @@ SECRET_KEY=            # Flask session secret (any random string)
 SUPABASE_URL=          # Project URL from Supabase dashboard
 SUPABASE_KEY=          # service_role key (bypasses RLS for server-side ops)
 ADMIN_EMAIL=           # Email of the admin user
+DATA_DIR=              # Base path for Parquet datalake (default: /mnt/ssd)
 ```
 
 ### Run
