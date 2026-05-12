@@ -72,6 +72,29 @@ CREATE POLICY "eigen brieven"
   TO authenticated
   USING (auth.uid() = user_id);
 
+-- Nieuwbouwprojecten (gevuld door een aparte scraper)
+CREATE TABLE nieuwbouw_projects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  developer TEXT,
+  city TEXT,
+  type TEXT CHECK (type IN ('huur', 'koop')),
+  price_min INT,
+  price_max INT,
+  units INT,
+  expected_date TEXT,
+  url TEXT UNIQUE NOT NULL,
+  scraped_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE nieuwbouw_projects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "nieuwbouw leesbaar voor ingelogden"
+  ON nieuwbouw_projects FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE INDEX idx_nieuwbouw_city ON nieuwbouw_projects(city);
+
 -- Index voor snelle lookups
 CREATE INDEX idx_listings_stad ON listings(stad);
 CREATE INDEX idx_listings_beschikbaar ON listings(beschikbaar);

@@ -95,10 +95,18 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .badge-pararius { background: #fff3e0; color: #c2410c; }
 .badge-kamernet  { background: #ecfdf5; color: #065f46; }
 .badge-funda     { background: #eff6ff; color: #1d4ed8; }
+.badge-huur      { background: #dcfce7; color: #15803d; }
+.badge-koop      { background: #dbeafe; color: #1d4ed8; }
 .card-prijs { font-size: 19px; font-weight: 700; color: #2563eb; margin-bottom: 6px; }
 .card-meta { font-size: 12px; color: var(--muted); }
 .card-link { display: inline-block; margin-top: 10px; font-size: 13px; color: #2563eb; }
 .card-link:hover { text-decoration: underline; }
+
+.dash-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.dash-tab { padding: 8px 16px; font-size: 14px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent;
+            margin-bottom: -1px; transition: color .15s, border-color .15s; }
+.dash-tab:hover { color: var(--text); }
+.dash-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
 
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .filter-label { font-size: 13px; color: var(--muted); }

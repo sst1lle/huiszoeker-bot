@@ -8,6 +8,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from db import get_db
 from scrapers.base import BaseScraper
@@ -207,7 +208,7 @@ def bouw_combis(scrapers: list, prefs: list) -> dict:
     Toevoegen van een nieuwe scraper vereist geen aanpassing hier.
     """
     combis = {}
-    for scraper in scrapers:
+    for scraper in [s for s in scrapers if not getattr(s, "excluded_from_main_loop", False)]:
         for pref in prefs:
             stad = (pref.get("stad") or "").strip()
             if not stad:
@@ -324,6 +325,34 @@ async def verwerk_notificaties(prefs: list) -> int:
     return gestuurd
 
 
+def scrape_nieuwbouw_job(nieuwbouw_scraper) -> None:
+    """Wekelijkse job: scrape nieuwbouwprojecten en upsert naar Supabase."""
+    print("[nieuwbouw] Wekelijkse scrape gestart", flush=True)
+    try:
+        db = get_db()
+        prefs = db.table("user_preferences").select("stad").execute().data or []
+        steden = list({p["stad"] for p in prefs if p.get("stad")})
+        if not steden:
+            print("[nieuwbouw] Geen steden gevonden in gebruikersvoorkeuren", flush=True)
+            return
+
+        print(f"[nieuwbouw] Scraping voor steden: {steden}", flush=True)
+        projecten = nieuwbouw_scraper.scrape_projecten(steden)
+
+        geslaagd = mislukt = 0
+        for project in projecten:
+            try:
+                db.table("nieuwbouw_projects").upsert(project, on_conflict="url").execute()
+                geslaagd += 1
+            except Exception as e:
+                print(f"[nieuwbouw] Upsert mislukt voor {project.get('url')}: {e}", flush=True)
+                mislukt += 1
+
+        print(f"[nieuwbouw] Klaar — {geslaagd} opgeslagen, {mislukt} mislukt", flush=True)
+    except Exception as e:
+        print(f"[nieuwbouw] ❌ Job fout: {e}", flush=True)
+
+
 if __name__ == '__main__':
     print("🏠 Huiszoekerbot gestart", flush=True)
 
@@ -334,6 +363,23 @@ if __name__ == '__main__':
 
     registreer_scrapers(alle_scrapers)
     storage = ListingStorage()
+
+    # Wekelijkse nieuwbouw-scrape via APScheduler (los van de 15-minuten loop)
+    nieuwbouw_scraper = next((s for s in alle_scrapers if s.name == "nieuwbouw"), None)
+    if nieuwbouw_scraper:
+        scheduler = BackgroundScheduler(timezone="Europe/Amsterdam")
+        scheduler.add_job(
+            scrape_nieuwbouw_job,
+            trigger="interval",
+            weeks=1,
+            args=[nieuwbouw_scraper],
+            id="nieuwbouw_weekly",
+            next_run_time=datetime.now(timezone.utc),  # ook direct bij opstarten
+        )
+        scheduler.start()
+        print("[nieuwbouw] Wekelijkse scheduler gestart", flush=True)
+    else:
+        print("[nieuwbouw] ⚠️ Scraper niet gevonden — wekelijkse job overgeslagen", flush=True)
 
     while True:
         try:

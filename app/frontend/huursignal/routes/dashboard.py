@@ -14,18 +14,29 @@ LEEFTIJD_OPTIES = [
 ]
 
 
+def _get_pref(user_id, db):
+    result = db.table("user_preferences").select("*").eq("user_id", user_id).execute()
+    return result.data[0] if result.data else None
+
+
 @dash_bp.route("/dashboard")
 @login_required
 def dashboard():
     user_id = session["user_id"]
     db = get_db()
 
-    pref_result = db.table("user_preferences").select("*").eq("user_id", user_id).execute()
-    pref = pref_result.data[0] if pref_result.data else None
-
+    pref = _get_pref(user_id, db)
     if not pref:
         return redirect(url_for("pref.onboarding"))
 
+    tab = request.args.get("tab", "woningen")
+
+    if tab == "nieuwbouw":
+        return _render_nieuwbouw(pref, db)
+    return _render_woningen(pref, db)
+
+
+def _render_woningen(pref, db):
     page     = request.args.get("page", 1, type=int)
     leeftijd = request.args.get("leeftijd", "", type=str)
     per_page = 20
@@ -53,7 +64,6 @@ def dashboard():
     raw    = result.data or []
     totaal = result.count or 0
 
-    # Pararius heeft type_woning=None → altijd tonen
     listings = [l for l in raw
                 if not (l.get("type_woning") and types and l["type_woning"] not in types)]
 
@@ -65,6 +75,7 @@ def dashboard():
 
     return render_template(
         "dashboard.html",
+        tab="woningen",
         listings=listings,
         totaal=totaal,
         filter_info=filter_info,
@@ -72,4 +83,23 @@ def dashboard():
         totaal_paginas=totaal_paginas,
         leeftijd=leeftijd,
         leeftijd_opties=LEEFTIJD_OPTIES,
+    )
+
+
+def _render_nieuwbouw(pref, db):
+    stad = pref.get("stad", "")
+
+    # Filter op stad — radius vereist coördinaten die de tabel niet heeft
+    result = (db.table("nieuwbouw_projects")
+                .select("*")
+                .ilike("city", stad)
+                .order("scraped_at", desc=True)
+                .execute())
+    projecten = result.data or []
+
+    return render_template(
+        "dashboard.html",
+        tab="nieuwbouw",
+        projecten=projecten,
+        filter_info=stad,
     )
