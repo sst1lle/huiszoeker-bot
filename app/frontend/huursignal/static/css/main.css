@@ -102,11 +102,15 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .card-link { display: inline-block; margin-top: 10px; font-size: 13px; color: #2563eb; }
 .card-link:hover { text-decoration: underline; }
 
-.dash-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
-.dash-tab { padding: 8px 16px; font-size: 14px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent;
-            margin-bottom: -1px; transition: color .15s, border-color .15s; }
-.dash-tab:hover { color: var(--text); }
-.dash-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+.tab-pills { display: flex; justify-content: center; gap: 8px; padding: 24px 0 28px; }
+.tab-pill { padding: 8px 28px; border-radius: 20px; font-size: 14px; font-weight: 500;
+            border: 1.5px solid #2563eb; color: #2563eb; background: var(--surface);
+            cursor: pointer; transition: background .15s, color .15s; }
+.tab-pill:hover, .tab-pill.active { background: #2563eb; color: #fff; }
+@media (max-width: 600px) {
+  .tab-pills { padding: 16px 0 20px; }
+  .tab-pill { flex: 1; text-align: center; }
+}
 
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .filter-label { font-size: 13px; color: var(--muted); }

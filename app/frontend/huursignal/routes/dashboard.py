@@ -14,29 +14,18 @@ LEEFTIJD_OPTIES = [
 ]
 
 
-def _get_pref(user_id, db):
-    result = db.table("user_preferences").select("*").eq("user_id", user_id).execute()
-    return result.data[0] if result.data else None
-
-
 @dash_bp.route("/dashboard")
 @login_required
 def dashboard():
     user_id = session["user_id"]
     db = get_db()
 
-    pref = _get_pref(user_id, db)
+    pref_result = db.table("user_preferences").select("*").eq("user_id", user_id).execute()
+    pref = pref_result.data[0] if pref_result.data else None
     if not pref:
         return redirect(url_for("pref.onboarding"))
 
-    tab = request.args.get("tab", "woningen")
-
-    if tab == "nieuwbouw":
-        return _render_nieuwbouw(pref, db)
-    return _render_woningen(pref, db)
-
-
-def _render_woningen(pref, db):
+    tab      = request.args.get("tab", "huurwoningen")
     page     = request.args.get("page", 1, type=int)
     leeftijd = request.args.get("leeftijd", "", type=str)
     per_page = 20
@@ -47,6 +36,7 @@ def _render_woningen(pref, db):
     max_prijs = pref.get("max_prijs") or 9999
     types     = pref.get("type_woning") or []
 
+    # ── Huurwoningen ──────────────────────────────────────────────────────────
     query = (db.table("listings")
                .select("*", count="exact")
                .eq("stad", stad)
@@ -60,10 +50,9 @@ def _render_woningen(pref, db):
         cutoff = (datetime.now(timezone.utc) - timedelta(days=int(leeftijd))).isoformat()
         query = query.gte("eerste_gezien", cutoff)
 
-    result = query.execute()
-    raw    = result.data or []
-    totaal = result.count or 0
-
+    result   = query.execute()
+    raw      = result.data or []
+    totaal   = result.count or 0
     listings = [l for l in raw
                 if not (l.get("type_woning") and types and l["type_woning"] not in types)]
 
@@ -73,9 +62,17 @@ def _render_woningen(pref, db):
     if types:
         filter_info += " · " + ", ".join(types)
 
+    # ── Nieuwbouw ─────────────────────────────────────────────────────────────
+    projecten = (db.table("nieuwbouw_projects")
+                   .select("*")
+                   .ilike("city", stad)
+                   .order("scraped_at", desc=True)
+                   .execute()
+                   .data or [])
+
     return render_template(
         "dashboard.html",
-        tab="woningen",
+        tab=tab,
         listings=listings,
         totaal=totaal,
         filter_info=filter_info,
@@ -83,23 +80,6 @@ def _render_woningen(pref, db):
         totaal_paginas=totaal_paginas,
         leeftijd=leeftijd,
         leeftijd_opties=LEEFTIJD_OPTIES,
-    )
-
-
-def _render_nieuwbouw(pref, db):
-    stad = pref.get("stad", "")
-
-    # Filter op stad — radius vereist coördinaten die de tabel niet heeft
-    result = (db.table("nieuwbouw_projects")
-                .select("*")
-                .ilike("city", stad)
-                .order("scraped_at", desc=True)
-                .execute())
-    projecten = result.data or []
-
-    return render_template(
-        "dashboard.html",
-        tab="nieuwbouw",
         projecten=projecten,
-        filter_info=stad,
+        stad=stad,
     )

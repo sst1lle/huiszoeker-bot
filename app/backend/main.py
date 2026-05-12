@@ -331,7 +331,13 @@ def scrape_nieuwbouw_job(nieuwbouw_scraper) -> None:
     try:
         db = get_db()
         prefs = db.table("user_preferences").select("stad").execute().data or []
-        steden = list({p["stad"] for p in prefs if p.get("stad")})
+        # stad kan meerdere steden bevatten als komma-gescheiden string (bijv. "Utrecht, Amsterdam")
+        steden = list({
+            s.strip().lower()
+            for p in prefs if p.get("stad")
+            for s in p["stad"].split(",")
+            if s.strip()
+        })
         if not steden:
             print("[nieuwbouw] Geen steden gevonden in gebruikersvoorkeuren", flush=True)
             return

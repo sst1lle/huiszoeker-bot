@@ -1,132 +1,147 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Nieuwbouw' if tab == 'nieuwbouw' else 'Woningen' }} — Huursignal{% endblock %}
+{% block title %}Dashboard — Huursignal{% endblock %}
 {% block content %}
 <div class="container">
-  <div class="page-head">
-    <h1>{{ 'Nieuwbouwprojecten' if tab == 'nieuwbouw' else 'Beschikbare woningen' }}</h1>
-    <p>
-      {% if tab == 'nieuwbouw' %}
-        {{ projecten|length }} project{{ 'en' if projecten|length != 1 else '' }} gevonden &middot; {{ filter_info }}
-      {% else %}
-        {{ totaal }} woningen gevonden &middot; {{ filter_info }}
-      {% endif %}
-    </p>
+
+  <div class="tab-pills">
+    <button class="tab-pill" data-tab="huurwoningen" onclick="switchTab('huurwoningen')">Huurwoningen</button>
+    <button class="tab-pill" data-tab="nieuwbouw" onclick="switchTab('nieuwbouw')">Nieuwbouw</button>
   </div>
 
-  <div class="dash-tabs">
-    <a href="/dashboard?tab=woningen" class="dash-tab {{ 'active' if tab == 'woningen' else '' }}">Woningen</a>
-    <a href="/dashboard?tab=nieuwbouw" class="dash-tab {{ 'active' if tab == 'nieuwbouw' else '' }}">Nieuwbouw</a>
-  </div>
-
-  {% if tab == 'woningen' %}
-
-  <div class="filter-bar">
-    <span class="filter-label">Online sinds:</span>
-    {% for val, label in leeftijd_opties %}
-    <a href="?tab=woningen&leeftijd={{ val }}" class="filter-pill {{ 'active' if leeftijd == val else '' }}">{{ label }}</a>
-    {% endfor %}
-  </div>
-
-  <div class="grid">
-    {% if listings %}
-      {% for l in listings %}
-      {% set foto = l.foto_url or '' %}
-      {% set adres = l.adres or 'Onbekend adres' %}
-      {% set stad_l = l.stad or '' %}
-      {% set prijs = fmt_prijs(l.prijs) %}
-      {% set opp = l.oppervlakte %}
-      {% set source = l.source or '' %}
-      {% set url = l.url or '#' %}
-      {% set leeftijd_info = listing_leeftijd(l.eerste_gezien) %}
-      <div class="card">
-        <a href="{{ url }}" target="_blank" rel="noopener">
-          {% if foto %}
-          <img class="card-photo" src="{{ foto }}" alt="" loading="lazy">
-          {% else %}
-          <div class="card-no-photo">🏠</div>
-          {% endif %}
-        </a>
-        <div class="card-body">
-          <div class="card-top">
-            <div class="card-adres">{{ adres }}{% if stad_l %}, {{ stad_l }}{% endif %}</div>
-            <span class="badge badge-{{ source or 'onbekend' }}">{{ (source or 'onbekend')|title }}</span>
-          </div>
-          <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
-          {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}
-          <div class="age-line {{ leeftijd_info.klasse }}">
-            {{ leeftijd_info.emoji }} Online sinds {{ fmt_datum_kort(l.eerste_gezien) }} · {{ leeftijd_info.label }}
-          </div>
-          <a href="{{ url }}" target="_blank" rel="noopener" class="card-link">Bekijk woning &rarr;</a>
-        </div>
-      </div>
-      {% endfor %}
-    {% else %}
-    <div class="empty">
-      <div class="icon">🔍</div>
-      <h2>Nog geen woningen gevonden</h2>
-      <p>De bot zoekt elke 15 minuten. Pas je <a href="/instellingen">voorkeuren</a> aan als je niets verwacht.</p>
+  {# ── Panel: Huurwoningen ── #}
+  <div id="panel-huurwoningen">
+    <div class="page-head">
+      <h1>Beschikbare woningen</h1>
+      <p>{{ totaal }} woningen gevonden &middot; {{ filter_info }}</p>
     </div>
-    {% endif %}
-  </div>
-  {% if totaal_paginas > 1 %}
-  <div class="pager">
-    {% if page > 1 %}<a href="?tab=woningen&page={{ page - 1 }}&leeftijd={{ leeftijd }}">&lsaquo;</a>{% endif %}
-    {% for p in range(1, totaal_paginas + 1) %}
-      {% if p == page %}
-      <span class="cur">{{ p }}</span>
-      {% else %}
-      <a href="?tab=woningen&page={{ p }}&leeftijd={{ leeftijd }}">{{ p }}</a>
-      {% endif %}
-    {% endfor %}
-    {% if page < totaal_paginas %}<a href="?tab=woningen&page={{ page + 1 }}&leeftijd={{ leeftijd }}">&rsaquo;</a>{% endif %}
-  </div>
-  {% endif %}
 
-  {% else %}
+    <div class="filter-bar">
+      <span class="filter-label">Online sinds:</span>
+      {% for val, label in leeftijd_opties %}
+      <a href="?tab=huurwoningen&leeftijd={{ val }}" class="filter-pill {{ 'active' if leeftijd == val else '' }}">{{ label }}</a>
+      {% endfor %}
+    </div>
 
-  <div class="grid">
-    {% if projecten %}
-      {% for p in projecten %}
-      {% set prijs_min = fmt_prijs(p.price_min) if p.price_min else '' %}
-      {% set prijs_max = fmt_prijs(p.price_max) if p.price_max else '' %}
-      <div class="card">
-        <div class="card-no-photo">🏗️</div>
-        <div class="card-body">
-          <div class="card-top">
-            <div class="card-adres">{{ p.title }}</div>
-            <span class="badge badge-{{ p.type or 'onbekend' }}">{{ (p.type or 'onbekend')|title }}</span>
-          </div>
-          {% if p.developer %}<div class="card-meta" style="margin-bottom:4px">{{ p.developer }}</div>{% endif %}
-          {% if p.city %}<div class="card-meta">📍 {{ p.city }}</div>{% endif %}
-          {% if prijs_min or prijs_max %}
-          <div class="card-prijs" style="margin-top:8px">
-            {% if prijs_min and prijs_max %}
-              {{ prijs_min }}–{{ prijs_max }}
-            {% elif prijs_min %}
-              vanaf {{ prijs_min }}
+    <div class="grid">
+      {% if listings %}
+        {% for l in listings %}
+        {% set foto = l.foto_url or '' %}
+        {% set adres = l.adres or 'Onbekend adres' %}
+        {% set stad_l = l.stad or '' %}
+        {% set prijs = fmt_prijs(l.prijs) %}
+        {% set opp = l.oppervlakte %}
+        {% set source = l.source or '' %}
+        {% set url = l.url or '#' %}
+        {% set leeftijd_info = listing_leeftijd(l.eerste_gezien) %}
+        <div class="card">
+          <a href="{{ url }}" target="_blank" rel="noopener">
+            {% if foto %}
+            <img class="card-photo" src="{{ foto }}" alt="" loading="lazy">
             {% else %}
-              tot {{ prijs_max }}
+            <div class="card-no-photo">🏠</div>
             {% endif %}
-            {% if p.type == 'huur' %}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span>{% endif %}
+          </a>
+          <div class="card-body">
+            <div class="card-top">
+              <div class="card-adres">{{ adres }}{% if stad_l %}, {{ stad_l }}{% endif %}</div>
+              <span class="badge badge-{{ source or 'onbekend' }}">{{ (source or 'onbekend')|title }}</span>
+            </div>
+            <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
+            {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}
+            <div class="age-line {{ leeftijd_info.klasse }}">
+              {{ leeftijd_info.emoji }} Online sinds {{ fmt_datum_kort(l.eerste_gezien) }} · {{ leeftijd_info.label }}
+            </div>
+            <a href="{{ url }}" target="_blank" rel="noopener" class="card-link">Bekijk woning &rarr;</a>
           </div>
-          {% endif %}
-          <div style="display:flex;gap:12px;margin-top:6px">
-            {% if p.units %}<div class="card-meta">{{ p.units }} woningen</div>{% endif %}
-            {% if p.expected_date %}<div class="card-meta">Oplevering: {{ p.expected_date }}</div>{% endif %}
-          </div>
-          <a href="{{ p.url }}" target="_blank" rel="noopener" class="card-link">Bekijk project &rarr;</a>
         </div>
+        {% endfor %}
+      {% else %}
+      <div class="empty">
+        <div class="icon">🔍</div>
+        <h2>Nog geen woningen gevonden</h2>
+        <p>De bot zoekt elke 15 minuten. Pas je <a href="/instellingen">voorkeuren</a> aan als je niets verwacht.</p>
       </div>
+      {% endif %}
+    </div>
+
+    {% if totaal_paginas > 1 %}
+    <div class="pager">
+      {% if page > 1 %}<a href="?tab=huurwoningen&page={{ page - 1 }}&leeftijd={{ leeftijd }}">&lsaquo;</a>{% endif %}
+      {% for p in range(1, totaal_paginas + 1) %}
+        {% if p == page %}
+        <span class="cur">{{ p }}</span>
+        {% else %}
+        <a href="?tab=huurwoningen&page={{ p }}&leeftijd={{ leeftijd }}">{{ p }}</a>
+        {% endif %}
       {% endfor %}
-    {% else %}
-    <div class="empty">
-      <div class="icon">🏗️</div>
-      <h2>Geen nieuwbouwprojecten gevonden</h2>
-      <p>Er zijn nog geen projecten in {{ filter_info }} beschikbaar.</p>
+      {% if page < totaal_paginas %}<a href="?tab=huurwoningen&page={{ page + 1 }}&leeftijd={{ leeftijd }}">&rsaquo;</a>{% endif %}
     </div>
     {% endif %}
   </div>
 
-  {% endif %}
+  {# ── Panel: Nieuwbouw ── #}
+  <div id="panel-nieuwbouw">
+    <div class="page-head">
+      <h1>Nieuwbouwprojecten</h1>
+      <p>{{ projecten|length }} project{{ 'en' if projecten|length != 1 else '' }} gevonden &middot; {{ stad }}</p>
+    </div>
+
+    <div class="grid">
+      {% if projecten %}
+        {% for p in projecten %}
+        {% set prijs_min = fmt_prijs(p.price_min) if p.price_min else '' %}
+        {% set prijs_max = fmt_prijs(p.price_max) if p.price_max else '' %}
+        <div class="card">
+          <div class="card-no-photo">🏗️</div>
+          <div class="card-body">
+            <div class="card-top">
+              <div class="card-adres">{{ p.title }}</div>
+              <span class="badge badge-{{ p.type or 'onbekend' }}">{{ (p.type or 'onbekend')|title }}</span>
+            </div>
+            {% if p.developer %}<div class="card-meta" style="margin-bottom:4px">{{ p.developer }}</div>{% endif %}
+            {% if p.city %}<div class="card-meta">📍 {{ p.city }}</div>{% endif %}
+            {% if prijs_min or prijs_max %}
+            <div class="card-prijs" style="margin-top:8px">
+              {% if prijs_min and prijs_max %}{{ prijs_min }}–{{ prijs_max }}
+              {% elif prijs_min %}vanaf {{ prijs_min }}
+              {% else %}tot {{ prijs_max }}{% endif %}
+              {% if p.type == 'huur' %}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span>{% endif %}
+            </div>
+            {% endif %}
+            <div style="display:flex;gap:12px;margin-top:6px">
+              {% if p.units %}<div class="card-meta">{{ p.units }} woningen</div>{% endif %}
+              {% if p.expected_date %}<div class="card-meta">Oplevering: {{ p.expected_date }}</div>{% endif %}
+            </div>
+            <a href="{{ p.url }}" target="_blank" rel="noopener" class="card-link">Bekijk project &rarr;</a>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div class="empty">
+        <div class="icon">🏗️</div>
+        <h2>Geen nieuwbouwprojecten gevonden</h2>
+        <p>Er zijn nog geen projecten in {{ stad }} beschikbaar.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
 </div>
+
+<script>
+  var _initialTab = {{ tab | tojson }};
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab-pill').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.tab === name);
+    });
+    document.getElementById('panel-huurwoningen').style.display = name === 'huurwoningen' ? '' : 'none';
+    document.getElementById('panel-nieuwbouw').style.display    = name === 'nieuwbouw'     ? '' : 'none';
+    var u = new URL(window.location);
+    u.searchParams.set('tab', name);
+    history.replaceState(null, '', u);
+  }
+
+  switchTab(_initialTab === 'nieuwbouw' ? 'nieuwbouw' : 'huurwoningen');
+</script>
 {% endblock %}
