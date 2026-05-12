@@ -55,6 +55,23 @@ CREATE TABLE scraper_config (
 -- Geen RLS-policies nodig: service_role bypasses RLS; authenticated users hebben geen toegang
 ALTER TABLE scraper_config ENABLE ROW LEVEL SECURITY;
 
+-- Gegenereerde motivatiebrieven per gebruiker
+CREATE TABLE motivation_letters (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  listing_url TEXT,
+  listing_title TEXT,
+  letter_text TEXT NOT NULL,
+  system_prompt_used TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE motivation_letters ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "eigen brieven"
+  ON motivation_letters FOR ALL
+  TO authenticated
+  USING (auth.uid() = user_id);
+
 -- Index voor snelle lookups
 CREATE INDEX idx_listings_stad ON listings(stad);
 CREATE INDEX idx_listings_beschikbaar ON listings(beschikbaar);

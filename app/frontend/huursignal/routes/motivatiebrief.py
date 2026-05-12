@@ -1,12 +1,12 @@
 import os
-from flask import Blueprint, session, request, render_template
+from flask import Blueprint, session, request, render_template, redirect, url_for
 
 from db import get_db
 from ..decorators import login_required
 
 motivatiebrief_bp = Blueprint("motivatiebrief", __name__)
 
-_SYSTEEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "Je bent een assistent die motivatiebrieven schrijft voor woningzoekers. "
     "Schrijf altijd in professioneel Nederlands. De brief mag maximaal 200 woorden zijn. "
     "Gebruik een vriendelijke maar formele toon. "
@@ -30,9 +30,15 @@ def _get_naam():
 @login_required
 def motivatiebrief():
     naam = _get_naam()
+    systeem_prompt = session.get("mb_system_prompt", DEFAULT_SYSTEM_PROMPT)
 
     if request.method == "GET":
-        return render_template("motivatiebrief.html", naam=naam)
+        return render_template("motivatiebrief.html", naam=naam, systeem_prompt=systeem_prompt)
+
+    # Save custom system prompt to session if provided
+    if "systeem_prompt" in request.form:
+        session["mb_system_prompt"] = request.form["systeem_prompt"].strip() or DEFAULT_SYSTEM_PROMPT
+        systeem_prompt = session["mb_system_prompt"]
 
     api_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not api_key:
@@ -40,6 +46,7 @@ def motivatiebrief():
             "motivatiebrief.html",
             naam=naam,
             form=request.form,
+            systeem_prompt=systeem_prompt,
             error=(
                 "Geen GROQ_API_KEY gevonden. "
                 "Voeg GROQ_API_KEY=your-key-here toe aan je .env bestand en herstart de container."
@@ -70,16 +77,35 @@ def motivatiebrief():
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": _SYSTEEM_PROMPT},
+                {"role": "system", "content": systeem_prompt},
                 {"role": "user", "content": gebruiker_prompt},
             ],
             max_tokens=400,
         )
         brief = response.choices[0].message.content.strip()
-        return render_template("motivatiebrief.html", naam=naam, form=f, brief=brief)
+
+        try:
+            get_db().table("motivation_letters").insert({
+                "user_id": session["user_id"],
+                "listing_url": f.get("listing_url") or None,
+                "listing_title": f.get("woning") or None,
+                "letter_text": brief,
+                "system_prompt_used": systeem_prompt,
+            }).execute()
+        except Exception:
+            pass
+
+        return render_template("motivatiebrief.html", naam=naam, form=f, brief=brief, systeem_prompt=systeem_prompt)
 
     except Exception as e:
         err_msg = str(e)
         if "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
             err_msg = "De aanvraag heeft te lang geduurd (timeout). Probeer het opnieuw."
-        return render_template("motivatiebrief.html", naam=naam, form=f, error=err_msg)
+        return render_template("motivatiebrief.html", naam=naam, form=f, error=err_msg, systeem_prompt=systeem_prompt)
+
+
+@motivatiebrief_bp.route("/motivatiebrief/reset-prompt", methods=["POST"])
+@login_required
+def reset_prompt():
+    session.pop("mb_system_prompt", None)
+    return redirect(url_for("motivatiebrief.motivatiebrief"))

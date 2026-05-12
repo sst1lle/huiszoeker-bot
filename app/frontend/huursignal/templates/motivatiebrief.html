@@ -9,6 +9,15 @@
   <div class="err" style="display:block">{{ error }}</div>
   {% endif %}
 
+  <details class="prompt-details">
+    <summary>Systeem prompt <span class="hint">(klik om te bewerken)</span></summary>
+    <form method="POST" action="/motivatiebrief/reset-prompt" id="resetForm" style="display:inline"></form>
+    <div class="prompt-editor">
+      <textarea form="mbForm" name="systeem_prompt" id="systeemPrompt" rows="5">{{ systeem_prompt }}</textarea>
+      <button type="submit" form="resetForm" class="btn btn-outline btn-sm">Herstel standaard</button>
+    </div>
+  </details>
+
   <div class="form-card">
     <form method="POST" action="/motivatiebrief" id="mbForm">
       <p class="section-label">Jouw gegevens</p>
@@ -36,6 +45,11 @@
       <div class="field">
         <label>Specifieke woning <span style="font-weight:400;color:#a1a1aa">(optioneel)</span></label>
         <input type="text" name="woning" value="{{ form.woning if form else '' }}" placeholder="bijv. Lange Leidsestraat 12, Amsterdam">
+      </div>
+
+      <div class="field">
+        <label>Link naar woning <span style="font-weight:400;color:#a1a1aa">(optioneel)</span></label>
+        <input type="url" name="listing_url" value="{{ form.listing_url if form else '' }}" placeholder="https://www.pararius.nl/...">
       </div>
 
       <div class="form-actions">

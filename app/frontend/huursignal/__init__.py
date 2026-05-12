@@ -21,11 +21,13 @@ def create_app():
     from .routes.preferences import pref_bp
     from .routes.admin import admin_bp
     from .routes.motivatiebrief import motivatiebrief_bp
+    from .routes.mijn_brieven import mijn_brieven_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dash_bp)
     app.register_blueprint(pref_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(motivatiebrief_bp)
+    app.register_blueprint(mijn_brieven_bp)
 
     return app

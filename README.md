@@ -1,6 +1,6 @@
 # Huursignal
 
-A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda every 15 minutes and sends Telegram messages when new listings match a user's criteria. Includes a multi-user web dashboard for managing preferences and browsing listings.
+A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda every 15 minutes and sends Telegram messages when new listings match a user's criteria. Includes a multi-user web dashboard for managing preferences, browsing listings, and generating motivation letters.
 
 ## Features
 
@@ -12,6 +12,7 @@ A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda e
 - Cloudflare bypass via FlareSolverr (required for Pararius and Funda)
 - Historical snapshots stored as Parquet files (queryable with DuckDB)
 - Listing availability validated every 6 hours (404 → marked unavailable)
+- AI-powered motivation letter generator via Groq (LLaMA 3.1 70B)
 
 ## Tech Stack
 
@@ -24,6 +25,7 @@ A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda e
 | Scraping | requests + BeautifulSoup4 |
 | Cloudflare bypass | FlareSolverr |
 | Data lake | Parquet via pandas + PyArrow |
+| AI | Groq API (LLaMA 3.1 70B) |
 | Deployment | Docker Compose |
 
 ## Architecture
@@ -40,7 +42,8 @@ Two processes share a single Docker image:
 - Auth via Supabase (`sign_in_with_password`, `sign_up`)
 - Dashboard with listing cards filtered to the user's preferences
 - Onboarding and settings for search criteria + Telegram setup
-- Admin panel (identified by `ADMIN_EMAIL` env var)
+- Admin panel (identified by `ADMIN_EMAIL` env var) — manage users and toggle scrapers
+- Motivatiebrief generator at `/motivatiebrief` — fills in personal details, calls Groq API, returns a ready-to-send letter
 
 **Scrapers** (`backend/scrapers/`) extend `BaseScraper` and are auto-discovered — dropping a new file in the directory is enough to add a scraper.
 
@@ -67,6 +70,7 @@ SUPABASE_URL=          # Project URL from Supabase dashboard
 SUPABASE_KEY=          # service_role key (bypasses RLS for server-side ops)
 ADMIN_EMAIL=           # Email of the admin user
 DATA_DIR=              # Base path for Parquet datalake (default: /mnt/ssd)
+GROQ_API_KEY=          # API key from console.groq.com (required for motivatiebrief)
 ```
 
 ### Run
@@ -96,6 +100,12 @@ app/
   frontend/         # Flask web app
     web.py
     huursignal/     # blueprints, templates, static assets
+      routes/
+        auth.py
+        dashboard.py
+        preferences.py
+        admin.py
+        motivatiebrief.py
   db.py             # shared Supabase client
   requirements.txt
 supabase/

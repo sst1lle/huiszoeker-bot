@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Mijn brieven — Huursignal{% endblock %}
+{% block content %}
+<div class="form-page">
+  <h1>Mijn motivatiebrieven</h1>
+  <p class="sub">{{ brieven|length }} opgeslagen {{ 'brief' if brieven|length == 1 else 'brieven' }}</p>
+
+  {% if brieven %}
+  <div class="brieven-list">
+    {% for b in brieven %}
+    <div class="brief-card" id="brief-{{ b.id }}">
+      <div class="brief-head">
+        <div class="brief-meta">
+          {% if b.listing_title %}
+            <span class="brief-title">
+              {% if b.listing_url %}
+                <a href="{{ b.listing_url }}" target="_blank" rel="noopener">{{ b.listing_title }}</a>
+              {% else %}
+                {{ b.listing_title }}
+              {% endif %}
+            </span>
+          {% elif b.listing_url %}
+            <a class="brief-title" href="{{ b.listing_url }}" target="_blank" rel="noopener">{{ b.listing_url }}</a>
+          {% else %}
+            <span class="brief-title brief-title--leeg">Geen woning opgegeven</span>
+          {% endif %}
+          <span class="brief-datum">{{ b.created_at[:10] }}</span>
+        </div>
+        <div class="brief-actions">
+          <button class="btn btn-outline btn-sm" onclick="kopieer('{{ b.id }}', this)">Kopieer</button>
+          <button class="btn btn-danger btn-sm" onclick="verwijder('{{ b.id }}', this)">Verwijder</button>
+        </div>
+      </div>
+      <textarea class="mb-textarea brief-text" id="text-{{ b.id }}" rows="8" readonly>{{ b.letter_text }}</textarea>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="icon">✉️</div>
+    <h2>Nog geen brieven opgeslagen</h2>
+    <p>Genereer een <a href="/motivatiebrief">motivatiebrief</a> — die wordt hier automatisch bewaard.</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+  function kopieer(id, btn) {
+    var ta = document.getElementById('text-' + id);
+    navigator.clipboard.writeText(ta.value).then(function () {
+      btn.textContent = 'Gekopieerd!';
+      setTimeout(function () { btn.textContent = 'Kopieer'; }, 2000);
+    });
+  }
+
+  function verwijder(id, btn) {
+    if (!confirm('Weet je zeker dat je deze brief wilt verwijderen?')) return;
+    btn.disabled = true;
+    fetch('/api/mijn-brieven/' + id, { method: 'DELETE' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          var el = document.getElementById('brief-' + id);
+          el.style.opacity = '0';
+          el.style.transition = 'opacity .2s';
+          setTimeout(function () { el.remove(); }, 200);
+        }
+      });
+  }
+</script>
+{% endblock %}
