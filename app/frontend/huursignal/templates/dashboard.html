@@ -3,9 +3,11 @@
 {% block content %}
 <div class="container">
 
-  <div class="tab-pills">
-    <button class="tab-pill" data-tab="huurwoningen" onclick="switchTab('huurwoningen')">Huurwoningen</button>
-    <button class="tab-pill" data-tab="nieuwbouw" onclick="switchTab('nieuwbouw')">Nieuwbouw</button>
+  <div class="tab-pills-wrap">
+    <div class="tab-pills">
+      <button class="tab-pill" data-tab="huurwoningen" onclick="switchTab('huurwoningen')">Huurwoningen</button>
+      <button class="tab-pill" data-tab="nieuwbouw" onclick="switchTab('nieuwbouw')">Nieuwbouw</button>
+    </div>
   </div>
 
   {# ── Panel: Huurwoningen ── #}
