@@ -110,6 +110,8 @@ def admin_scrapers():
         cat = r.get("category") or "huurwoningen"
         r["category"] = cat
         r["count_label"] = _COUNT_LABEL.get(cat, "items")
+        r.setdefault("status", "onbekend")
+        r.setdefault("error_message", None)
 
     groups: dict[str, list] = {}
     for r in rows:

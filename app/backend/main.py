@@ -21,6 +21,67 @@ load_dotenv()
 INTERVAL = 15 * 60
 VALIDATIE_INTERVAL_UREN = 6
 
+# Eenmalige waarschuwing zodat migratie-berichten het log niet overspoelen
+_MIGRATION_WARNED = False
+# Kolommen die aanwezig moeten zijn in scraper_config na migratie 003
+_SCRAPER_CONFIG_NEW_COLS = {"category", "status", "error_message"}
+_MIGRATION_FILE = "supabase/migrations/003_scraper_categories.sql"
+
+
+def _log_migration_warning() -> None:
+    global _MIGRATION_WARNED
+    if not _MIGRATION_WARNED:
+        print(
+            f"[schema] ⚠️  scraper_config mist kolommen — voer uit in Supabase SQL Editor:\n"
+            f"[schema]    {_MIGRATION_FILE}",
+            flush=True,
+        )
+        _MIGRATION_WARNED = True
+
+
+def _safe_scraper_update(db, name: str, data: dict) -> None:
+    """
+    Update scraper_config row. Bij PGRST204 (ontbrekende kolommen): val terug op
+    alleen last_run/last_count zodat de bot blijft draaien vóór de migratie.
+    """
+    try:
+        db.table("scraper_config").update(data).eq("name", name).execute()
+    except Exception as e:
+        if "PGRST204" in str(e):
+            _log_migration_warning()
+            safe = {k: v for k, v in data.items() if k in ("last_run", "last_count", "enabled")}
+            if safe:
+                try:
+                    db.table("scraper_config").update(safe).eq("name", name).execute()
+                except Exception:
+                    pass
+        else:
+            raise
+
+
+def valideer_schema() -> None:
+    """
+    Controleert of scraper_config de verwachte kolommen heeft.
+    Logt een duidelijke migratie-waarschuwing als dat niet zo is.
+    Crasht nooit — louter informatief.
+    """
+    try:
+        db = get_db()
+        rows = db.table("scraper_config").select("*").limit(1).execute().data
+        if rows:
+            aanwezig = set(rows[0].keys())
+            ontbrekend = _SCRAPER_CONFIG_NEW_COLS - aanwezig
+            if ontbrekend:
+                print(
+                    f"[schema] ⚠️  Ontbrekende kolommen in scraper_config: {sorted(ontbrekend)}\n"
+                    f"[schema]    Voer uit in Supabase SQL Editor: {_MIGRATION_FILE}",
+                    flush=True,
+                )
+        else:
+            print("[schema] scraper_config leeg — scrapers worden bij botstart geregistreerd", flush=True)
+    except Exception as e:
+        print(f"[schema] Kon schema niet valideren: {e}", flush=True)
+
 
 def load_scrapers() -> list:
     """
@@ -145,23 +206,35 @@ def upsert_listing(listing: dict) -> str | None:
 def registreer_scrapers(scrapers: list) -> None:
     """
     Registreer ontdekte scrapers in scraper_config als ze er nog niet instaan.
-    Verwijdert ook de verouderde aggregatie-entry "nieuwbouw" die vervangen is
-    door aparte "nieuwbouw_nederland" en "nieuwbouw_nl" entries.
+    Verwijdert de verouderde aggregatie-entry "nieuwbouw".
+    Val terug op minimale insert als nieuwe kolommen nog niet bestaan (pre-migratie).
     """
     try:
         db = get_db()
-        # Verwijder verouderd aggregatie-entry
-        db.table("scraper_config").delete().eq("name", "nieuwbouw").execute()
+        try:
+            db.table("scraper_config").delete().eq("name", "nieuwbouw").execute()
+        except Exception:
+            pass
 
         bestaand = {c["name"] for c in (db.table("scraper_config").select("name").execute().data or [])}
         for s in scrapers:
             if s.name not in bestaand:
-                db.table("scraper_config").insert({
-                    "name":     s.name,
-                    "enabled":  True,
-                    "category": getattr(s, "category", "huurwoningen"),
-                    "status":   "onbekend",
-                }).execute()
+                try:
+                    db.table("scraper_config").insert({
+                        "name":     s.name,
+                        "enabled":  True,
+                        "category": getattr(s, "category", "huurwoningen"),
+                        "status":   "onbekend",
+                    }).execute()
+                except Exception as e:
+                    if "PGRST204" in str(e):
+                        _log_migration_warning()
+                        db.table("scraper_config").insert({
+                            "name":    s.name,
+                            "enabled": True,
+                        }).execute()
+                    else:
+                        raise
                 print(f"[scrapers] Geregistreerd in scraper_config: {s.name}", flush=True)
     except Exception as e:
         print(f"[scrapers] Kon scrapers niet registreren: {e}", flush=True)
@@ -183,12 +256,12 @@ def update_scraper_stats(counts: dict, errors: dict | None = None) -> None:
         for name in alle_namen:
             count = counts.get(name, 0)
             err = errors.get(name)
-            db.table("scraper_config").update({
+            _safe_scraper_update(db, name, {
                 "last_run":      nu,
                 "last_count":    count,
                 "status":        "fout" if err else "actief",
                 "error_message": err,
-            }).eq("name", name).execute()
+            })
     except Exception as e:
         print(f"[scrapers] Kon scraper stats niet opslaan: {e}", flush=True)
 
@@ -444,19 +517,19 @@ def scrape_nieuwbouw_job(nieuwbouw_scrapers: list) -> None:
                     f"({hidden} verborgen status), {mislukt} mislukt",
                     flush=True,
                 )
-                db.table("scraper_config").update({
+                _safe_scraper_update(db, scraper.name, {
                     "last_run":      nu,
                     "last_count":    geslaagd,
                     "status":        "actief",
                     "error_message": None,
-                }).eq("name", scraper.name).execute()
+                })
 
             except Exception as e:
                 print(f"[nieuwbouw] {scraper.name} fout: {e}", flush=True)
-                db.table("scraper_config").update({
+                _safe_scraper_update(db, scraper.name, {
                     "status":        "fout",
                     "error_message": str(e)[:500],
-                }).eq("name", scraper.name).execute()
+                })
 
         _update_nieuwbouw_lifecycle(db, all_scraped_urls)
 
@@ -466,6 +539,7 @@ def scrape_nieuwbouw_job(nieuwbouw_scrapers: list) -> None:
 
 if __name__ == '__main__':
     print("🏠 Huiszoekerbot gestart", flush=True)
+    valideer_schema()
 
     alle_scrapers = load_scrapers()
     if not alle_scrapers:
