@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, session, redirect, url_for, request, render_template
 
@@ -5,6 +6,7 @@ from db import get_db
 from ..decorators import login_required
 
 dash_bp = Blueprint("dash", __name__)
+logger = logging.getLogger(__name__)
 
 LEEFTIJD_OPTIES = [
     ("", "Alles"),
@@ -12,6 +14,49 @@ LEEFTIJD_OPTIES = [
     ("3", "Laatste 3 dagen"),
     ("7", "Laatste week"),
 ]
+
+
+def _query_nieuwbouw(db, stad: str) -> list[dict]:
+    """
+    Zoek nieuwbouwprojecten op stad.
+    Normaliseert koppeltekens naar spaties zodat "den-haag" matcht op "Den Haag".
+    Logt debug-info zodat lege resultaten makkelijk te diagnosticeren zijn.
+    """
+    stad_search = stad.replace("-", " ").strip()
+
+    projecten = (
+        db.table("nieuwbouw_projects")
+          .select("*")
+          .ilike("city", f"%{stad_search}%")
+          .order("scraped_at", desc=True)
+          .execute()
+          .data or []
+    )
+
+    logger.info(
+        f"[dashboard] nieuwbouw query stad='{stad}' → zoekterm='{stad_search}' → {len(projecten)} rijen"
+    )
+
+    if not projecten:
+        # Log steekproef van steden in de DB zodat je ziet waarom er geen match is
+        sample = (
+            db.table("nieuwbouw_projects")
+              .select("city, source")
+              .limit(10)
+              .execute()
+              .data or []
+        )
+        logger.warning(
+            f"[dashboard] 0 nieuwbouw resultaten voor '{stad_search}'. "
+            f"Steden in DB (steekproef): {[r.get('city') for r in sample]}"
+        )
+
+    # Normaliseer type naar lowercase voor template-vergelijking
+    for p in projecten:
+        if p.get("type"):
+            p["type"] = p["type"].lower()
+
+    return projecten
 
 
 @dash_bp.route("/dashboard")
@@ -63,13 +108,7 @@ def dashboard():
         filter_info += " · " + ", ".join(types)
 
     # ── Nieuwbouw ─────────────────────────────────────────────────────────────
-    # Gebruik partial match zodat "den haag" ook "Den-Haag" of "den haag" matcht
-    projecten = (db.table("nieuwbouw_projects")
-                   .select("*")
-                   .ilike("city", f"%{stad}%")
-                   .order("scraped_at", desc=True)
-                   .execute()
-                   .data or [])
+    projecten = _query_nieuwbouw(db, stad)
 
     return render_template(
         "dashboard.html",

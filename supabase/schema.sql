@@ -72,7 +72,11 @@ CREATE POLICY "eigen brieven"
   TO authenticated
   USING (auth.uid() = user_id);
 
--- Nieuwbouwprojecten (gevuld door een aparte scraper)
+-- Nieuwbouwprojecten (gevuld door een aparte scraper, wekelijks via APScheduler)
+-- type is altijd lowercase: 'huur' of 'koop'
+-- city bevat de naam zoals die op de bronsite staat, bijv. "Den Haag"
+-- source: 'nieuwbouw-nederland.nl' of 'nieuwbouw.nl'
+-- latitude/longitude: optioneel, voor toekomstige radius-filtering
 CREATE TABLE nieuwbouw_projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -83,6 +87,9 @@ CREATE TABLE nieuwbouw_projects (
   price_max INT,
   units INT,
   expected_date TEXT,
+  source TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
   url TEXT UNIQUE NOT NULL,
   scraped_at TIMESTAMPTZ DEFAULT NOW()
 );
