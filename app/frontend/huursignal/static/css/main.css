@@ -102,14 +102,21 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .card-link { display: inline-block; margin-top: 10px; font-size: 13px; color: #2563eb; }
 .card-link:hover { text-decoration: underline; }
 
-.tab-pills { display: flex; justify-content: center; gap: 8px; padding: 24px 0 28px; }
-.tab-pill { padding: 8px 28px; border-radius: 20px; font-size: 14px; font-weight: 500;
-            border: 1.5px solid #2563eb; color: #2563eb; background: var(--surface);
-            cursor: pointer; transition: background .15s, color .15s; }
-.tab-pill:hover, .tab-pill.active { background: #2563eb; color: #fff; }
-@media (max-width: 600px) {
-  .tab-pills { padding: 16px 0 20px; }
-  .tab-pill { flex: 1; text-align: center; }
+.tab-bar { width: 100%; background: var(--surface); border-bottom: 1px solid var(--border);
+           display: flex; justify-content: center; padding: 16px 20px; }
+.tab-pills { display: inline-flex; gap: 6px; background: var(--bg);
+             border: 1px solid var(--border); border-radius: 28px; padding: 4px; }
+.tab-pill { padding: 10px 32px; border-radius: 24px; font-size: 14px; font-weight: 600;
+            border: none; color: var(--muted); background: transparent;
+            cursor: pointer; transition: background .18s, color .18s, box-shadow .18s;
+            white-space: nowrap; letter-spacing: .01em; }
+.tab-pill:hover { color: var(--text); background: var(--surface); }
+.tab-pill.active { background: #2563eb; color: #fff;
+                   box-shadow: 0 2px 8px rgba(37,99,235,.30); }
+@media (max-width: 540px) {
+  .tab-bar { padding: 12px 16px; }
+  .tab-pills { width: 100%; }
+  .tab-pill { flex: 1; text-align: center; padding: 10px 0; }
 }
 
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
