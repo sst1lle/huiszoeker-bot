@@ -102,21 +102,17 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .card-link { display: inline-block; margin-top: 10px; font-size: 13px; color: #2563eb; }
 .card-link:hover { text-decoration: underline; }
 
-.tab-bar { width: 100%; background: var(--surface); border-bottom: 1px solid var(--border);
-           display: flex; justify-content: center; padding: 16px 20px; }
-.tab-pills { display: inline-flex; gap: 6px; background: var(--bg);
-             border: 1px solid var(--border); border-radius: 28px; padding: 4px; }
-.tab-pill { padding: 10px 32px; border-radius: 24px; font-size: 14px; font-weight: 600;
-            border: none; color: var(--muted); background: transparent;
-            cursor: pointer; transition: background .18s, color .18s, box-shadow .18s;
-            white-space: nowrap; letter-spacing: .01em; }
-.tab-pill:hover { color: var(--text); background: var(--surface); }
-.tab-pill.active { background: #2563eb; color: #fff;
-                   box-shadow: 0 2px 8px rgba(37,99,235,.30); }
+.tab-pills { display: flex; width: fit-content; margin: 28px auto 24px;
+             background: var(--surface); border-radius: 50px; padding: 5px;
+             box-shadow: 0 2px 14px var(--shadow-md), 0 0 0 1px var(--border); gap: 4px; }
+.tab-pill { padding: 11px 34px; border-radius: 50px; font-size: 14px; font-weight: 600;
+            border: none; color: var(--muted); background: transparent; cursor: pointer;
+            transition: background .2s, color .2s, box-shadow .2s; white-space: nowrap; }
+.tab-pill:hover { color: var(--text); background: var(--bg); }
+.tab-pill.active { background: #2563eb; color: #fff; box-shadow: 0 3px 10px rgba(37,99,235,.40); }
 @media (max-width: 540px) {
-  .tab-bar { padding: 12px 16px; }
-  .tab-pills { width: 100%; }
-  .tab-pill { flex: 1; text-align: center; padding: 10px 0; }
+  .tab-pills { width: calc(100% - 0px); box-sizing: border-box; }
+  .tab-pill { flex: 1; text-align: center; padding: 11px 0; }
 }
 
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }

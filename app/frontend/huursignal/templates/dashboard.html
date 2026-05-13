@@ -1,14 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — Huursignal{% endblock %}
 {% block content %}
-<div class="tab-bar">
+<div class="container">
+
   <div class="tab-pills">
     <button class="tab-pill" data-tab="huurwoningen" onclick="switchTab('huurwoningen')">Huurwoningen</button>
     <button class="tab-pill" data-tab="nieuwbouw" onclick="switchTab('nieuwbouw')">Nieuwbouw</button>
   </div>
-</div>
-
-<div class="container">
 
   {# ── Panel: Huurwoningen ── #}
   <div id="panel-huurwoningen">
