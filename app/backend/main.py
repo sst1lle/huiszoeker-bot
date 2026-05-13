@@ -332,11 +332,12 @@ def scrape_nieuwbouw_job(nieuwbouw_scraper) -> None:
         db = get_db()
         prefs = db.table("user_preferences").select("stad").execute().data or []
         # stad kan meerdere steden bevatten als komma-gescheiden string (bijv. "Utrecht, Amsterdam")
+        # strip ook leading/trailing hyphens die ontstaan door slechte opslag (bijv. "-Amsterdam")
         steden = list({
-            s.strip().lower()
+            s.strip().strip("-").strip()
             for p in prefs if p.get("stad")
             for s in p["stad"].split(",")
-            if s.strip()
+            if s.strip().strip("-").strip()
         })
         if not steden:
             print("[nieuwbouw] Geen steden gevonden in gebruikersvoorkeuren", flush=True)

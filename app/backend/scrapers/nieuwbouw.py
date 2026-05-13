@@ -1,6 +1,7 @@
 import re
 import logging
 from datetime import datetime, timezone
+from urllib.parse import quote_plus
 
 import requests
 from bs4 import BeautifulSoup
@@ -73,7 +74,7 @@ def _parse_prijzen(text: str) -> tuple[int | None, int | None]:
 #   </article>
 
 def _scrape_nieuwbouw_nederland(stad: str) -> list[dict]:
-    url = f"https://www.nieuwbouw-nederland.nl/projecten/?place={stad}"
+    url = f"https://www.nieuwbouw-nederland.nl/projecten/?place={quote_plus(stad)}"
     logger.info(f"[nieuwbouw] Fetching nieuwbouw-nederland.nl for stad: {stad}")
 
     html, method = _fetch_html(url, "nieuwbouw-nederland.nl")
@@ -158,7 +159,7 @@ def _scrape_nieuwbouw_nl(stad: str) -> list[dict]:
     scraped_at = datetime.now(timezone.utc).isoformat()
 
     for type_ in ("huur", "koop"):
-        url = f"https://nieuwbouw.nl/aanbod/{type_}/?locatie={stad}"
+        url = f"https://nieuwbouw.nl/aanbod/{type_}/?locatie={quote_plus(stad)}"
         logger.info(f"[nieuwbouw] Fetching nieuwbouw.nl/{type_} for stad: {stad}")
 
         html, method = _fetch_html(url, f"nieuwbouw.nl/{type_}")

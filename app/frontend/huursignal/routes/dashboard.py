@@ -63,9 +63,10 @@ def dashboard():
         filter_info += " · " + ", ".join(types)
 
     # ── Nieuwbouw ─────────────────────────────────────────────────────────────
+    # Gebruik partial match zodat "den haag" ook "Den-Haag" of "den haag" matcht
     projecten = (db.table("nieuwbouw_projects")
                    .select("*")
-                   .ilike("city", stad)
+                   .ilike("city", f"%{stad}%")
                    .order("scraped_at", desc=True)
                    .execute()
                    .data or [])
