@@ -525,7 +525,9 @@ def scrape_nieuwbouw_job(nieuwbouw_scrapers: list) -> None:
                 })
 
             except Exception as e:
-                print(f"[nieuwbouw] {scraper.name} fout: {e}", flush=True)
+                import traceback as _tb
+                print(f"[nieuwbouw] {scraper.name} FOUT: {e}", flush=True)
+                _tb.print_exc()
                 _safe_scraper_update(db, scraper.name, {
                     "status":        "fout",
                     "error_message": str(e)[:500],
