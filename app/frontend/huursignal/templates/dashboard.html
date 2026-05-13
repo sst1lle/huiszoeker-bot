@@ -90,6 +90,12 @@
 
     <div class="grid">
       {% if projecten %}
+        {% set _status_labels = {
+          'sold_out':             'Uitverkocht',
+          'rented_out':           'Verhuurd',
+          'under_option':         'Onder optie',
+          'registration_closed':  'Inschrijving gesloten'
+        } %}
         {% for p in projecten %}
         {% set prijs_min = fmt_prijs(p.price_min) if p.price_min else '' %}
         {% set prijs_max = fmt_prijs(p.price_max) if p.price_max else '' %}
@@ -100,6 +106,9 @@
               <div class="card-adres">{{ p.title }}</div>
               <span class="badge badge-{{ p.type or 'onbekend' }}">{{ (p.type or 'onbekend')|title }}</span>
             </div>
+            {% if p.status and p.status != 'available' %}
+            <div class="status-badge status-{{ p.status }}">{{ _status_labels.get(p.status, p.status) }}</div>
+            {% endif %}
             {% if p.developer %}<div class="card-meta" style="margin-bottom:4px">{{ p.developer }}</div>{% endif %}
             {% if p.city %}<div class="card-meta">📍 {{ p.city }}</div>{% endif %}
             {% if prijs_min or prijs_max %}

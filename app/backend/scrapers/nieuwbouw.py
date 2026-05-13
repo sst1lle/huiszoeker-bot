@@ -1,8 +1,11 @@
+"""
+Nieuwbouw scraper — scrapet alle pagina's van beide sites, slaat landelijk op.
+Stadsfiltering gebeurt in de dashboard query layer, niet hier.
+"""
 import re
+import time
 import logging
 from datetime import datetime, timezone
-from urllib.parse import quote_plus
-
 import requests
 from bs4 import BeautifulSoup
 
@@ -12,278 +15,430 @@ logger = logging.getLogger(__name__)
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 _TIMEOUT = 15
-_MIN_CARDS_THRESHOLD = 3  # below this → fallback to FlareSolverr
+_PAGE_DELAY = 1.5      # seconden tussen paginaverzoeken (ethisch scrapen)
+_MAX_PAGES = 60         # harde limiet om oneindige loops te voorkomen
+_STOP_IF_NO_NEW = 3    # stop na N opeenvolgende pagina's zonder nieuwe projecten
+
+_HIDDEN_STATUSES = {"sold_out", "rented_out", "under_option", "registration_closed"}
+
+# Meest specifieke patronen eerst om false positives te vermijden
+_STATUS_KEYWORDS: list[tuple[str, str]] = [
+    ("nog woningen beschikbaar",    "available"),
+    ("woningen beschikbaar",        "available"),
+    ("nog beschikbaar",             "available"),
+    ("in verhuur",                  "available"),
+    ("in verkoop",                  "available"),
+    ("beschikbaar",                 "available"),
+    ("volledig verkocht",           "sold_out"),
+    ("uitverkocht",                 "sold_out"),
+    ("volledig verhuurd",           "rented_out"),
+    ("verhuurd",                    "rented_out"),
+    ("onder optie",                 "under_option"),
+    ("inschrijving is gesloten",    "registration_closed"),
+    ("inschrijving gesloten",       "registration_closed"),
+    ("registratie gesloten",        "registration_closed"),
+]
+
+# Bekende stadsalternatieven → genormaliseerde naam
+_STAD_MAP = {
+    "'s-gravenhage": "den haag",
+    "s-gravenhage":  "den haag",
+    "sgravenhage":   "den haag",
+    "the hague":     "den haag",
+    "'s-hertogenbosch": "den bosch",
+    "s-hertogenbosch":  "den bosch",
+    "shertogenbosch":   "den bosch",
+}
+
+# Geocode-cache voor de huidige scrape-run (stad → (lat, lon))
+_geo_cache: dict[str, tuple[float | None, float | None]] = {}
 
 
-def _fetch_html(url: str, site_label: str) -> tuple[str | None, str]:
+def _detect_status(card) -> tuple[str, str | None]:
     """
-    Fetch HTML via direct requests. Falls back to FlareSolverr if fewer than
-    _MIN_CARDS_THRESHOLD cards are detected (JS-rendered page guard).
-    Returns (html, method_used).
+    Detecteer projectstatus uit een BeautifulSoup card element.
+    Controleert eerst CSS-klassen, dan tekst-inhoud.
+    Geeft (status, matched_phrase) terug.
+    """
+    # CSS-klasse controle (bijv. class="badge uitverkocht")
+    _CLASS_STATUS = {
+        "uitverkocht": "sold_out",
+        "verkocht":    "sold_out",
+        "verhuurd":    "rented_out",
+        "gesloten":    "registration_closed",
+        "optie":       "under_option",
+    }
+    for el in card.find_all(True):
+        classes_lower = " ".join(el.get("class", [])).lower()
+        for keyword, status in _CLASS_STATUS.items():
+            if keyword in classes_lower:
+                logger.debug(f"[nieuwbouw] Status via CSS class: '{keyword}' → '{status}'")
+                return status, keyword
+
+    # Tekst-inhoud controle
+    text = card.get_text(" ", strip=True).lower()
+    for phrase, status in _STATUS_KEYWORDS:
+        if phrase in text:
+            logger.debug(f"[nieuwbouw] Status via tekst: '{phrase}' → '{status}'")
+            return status, phrase
+
+    return "available", None
+
+
+def _normalize_city(city: str | None) -> str | None:
+    if not city:
+        return None
+    s = city.strip().lower()
+    return _STAD_MAP.get(s, s)
+
+
+def _geocode(city: str) -> tuple[float | None, float | None]:
+    """Geocode via Nominatim (OpenStreetMap). Cache per scrape-run. Rate: 1 req/sec."""
+    key = city.lower().strip()
+    if key in _geo_cache:
+        return _geo_cache[key]
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": f"{city}, Netherlands", "format": "json", "limit": 1},
+            headers={"User-Agent": "huursignal-nieuwbouw/1.0 (sam@huursignal.nl)"},
+            timeout=6,
+        )
+        data = r.json()
+        result = (float(data[0]["lat"]), float(data[0]["lon"])) if data else (None, None)
+    except Exception as e:
+        logger.debug(f"[geocode] Mislukt voor '{city}': {e}")
+        result = (None, None)
+    _geo_cache[key] = result
+    time.sleep(1.1)  # Nominatim eist ≥1 sec tussen verzoeken
+    return result
+
+
+def _get(url: str, label: str) -> tuple[str | None, str]:
+    """
+    Directe request met FlareSolverr-fallback.
+    Logt welke methode gebruikt wordt.
     """
     try:
         r = requests.get(url, timeout=_TIMEOUT, headers={"User-Agent": _UA}, allow_redirects=True)
-        if r.status_code == 200:
-            html = r.text
-            # Quick sniff: count project-card indicators before full parse
-            rough_count = html.count("project-card") + html.count("<article")
-            if rough_count >= _MIN_CARDS_THRESHOLD:
-                logger.info(f"[nieuwbouw] {site_label}: using requests")
-                return html, "requests"
-            logger.info(
-                f"[nieuwbouw] {site_label}: requests returned {rough_count} card hints "
-                f"(< {_MIN_CARDS_THRESHOLD}) — switching to FlareSolverr"
-            )
-        else:
-            logger.warning(f"[nieuwbouw] {site_label}: HTTP {r.status_code} — switching to FlareSolverr")
+        if r.status_code == 200 and "Just a moment" not in r.text:
+            logger.debug(f"[nieuwbouw] {label}: requests OK")
+            return r.text, "requests"
+        logger.info(f"[nieuwbouw] {label}: HTTP {r.status_code} — FlareSolverr fallback")
     except Exception as e:
-        logger.warning(f"[nieuwbouw] {site_label}: requests mislukt ({e}) — switching to FlareSolverr")
+        logger.info(f"[nieuwbouw] {label}: requests mislukt ({e}) — FlareSolverr fallback")
 
     try:
         html = BaseScraper.flare_get(url)
-        logger.info(f"[nieuwbouw] {site_label}: using flaresolverr")
+        logger.info(f"[nieuwbouw] {label}: flaresolverr OK")
         return html, "flaresolverr"
     except Exception as e:
-        logger.error(f"[nieuwbouw] {site_label}: FlareSolverr ook mislukt: {e}")
+        logger.error(f"[nieuwbouw] {label}: beide methodes mislukt: {e}")
         return None, "failed"
 
 
-def _parse_prijzen(text: str) -> tuple[int | None, int | None]:
-    """Extract (price_min, price_max) from strings like '€250.000,- tot €650.000,-'."""
+def _parse_prijs_range(text: str) -> tuple[int | None, int | None]:
     bedragen = re.findall(r"€\s*([\d.]+)", text)
     vals = []
     for b in bedragen:
-        cleaned = re.sub(r"\.", "", b)
         try:
-            vals.append(int(cleaned))
+            vals.append(int(b.replace(".", "")))
         except ValueError:
             pass
     vals = [v for v in vals if v > 100]
-    if not vals:
-        return None, None
-    return min(vals), max(vals)
+    return (min(vals), max(vals)) if vals else (None, None)
 
 
 # ─── nieuwbouw-nederland.nl ───────────────────────────────────────────────────
-# Actual HTML structure (verified):
-#   <article class="odd first">
-#     <h2><a href="...">Title</a></h2>
-#     <span class="prijs">€250.000,- tot €650.000,-</span>
-#     <span class="segment">Koop (306)</span>
-#     <span class="extra"><span class="plaats">Amsterdam</span></span>
-#   </article>
+# Structuur (geverifieerd): <article class="odd/even">
+#   <h2><a href="...">Titel</a></h2>
+#   <span class="prijs">€250.000,- tot €650.000,-</span>
+#   <span class="segment">Koop (306)</span>
+#   <span class="extra"><span class="plaats">Amsterdam</span></span>
+# Paginering: ?sort=change_desc&p={n}, 125 pagina's totaal
 
-def _scrape_nieuwbouw_nederland(stad: str) -> list[dict]:
-    url = f"https://www.nieuwbouw-nederland.nl/projecten/?place={quote_plus(stad)}"
-    logger.info(f"[nieuwbouw] Fetching nieuwbouw-nederland.nl for stad: {stad}")
+def _parse_nn_card(card, scraped_at: str) -> dict | None:
+    try:
+        h2 = card.find("h2")
+        if not h2:
+            return None
+        a = h2.find("a", href=True)
+        if not a:
+            return None
+        href = a["href"]
+        if not href.startswith("http"):
+            href = "https://www.nieuwbouw-nederland.nl" + href
+        title = a.get_text(strip=True)
+        if not title:
+            return None
 
-    html, method = _fetch_html(url, "nieuwbouw-nederland.nl")
-    if not html:
-        return []
+        plaats_el = card.find("span", class_="plaats")
+        raw_city  = plaats_el.get_text(strip=True) if plaats_el else None
+        city      = _normalize_city(raw_city)
 
-    soup = BeautifulSoup(html, "html.parser")
-    cards = soup.find_all("article")
-    logger.info(f"[nieuwbouw] nieuwbouw-nederland.nl ({method}): {len(cards)} raw cards for '{stad}'")
+        segment_el   = card.find("span", class_="segment")
+        segment_text = segment_el.get_text(strip=True).lower() if segment_el else ""
+        type_ = "koop" if "koop" in segment_text else ("huur" if "huur" in segment_text else None)
 
-    projecten = []
-    scraped_at = datetime.now(timezone.utc).isoformat()
+        units       = None
+        units_match = re.search(r"\((\d+)\)", segment_text)
+        if units_match:
+            units = int(units_match.group(1))
 
-    for card in cards:
-        try:
-            h2 = card.find("h2")
-            if not h2:
-                continue
-            a_tag = h2.find("a", href=True)
-            if not a_tag:
-                continue
-            href = a_tag["href"]
-            if not href.startswith("http"):
-                href = "https://www.nieuwbouw-nederland.nl" + href
-            title = a_tag.get_text(strip=True)
-            if not title:
-                continue
+        prijs_el             = card.find("span", class_="prijs")
+        price_min, price_max = _parse_prijs_range(prijs_el.get_text() if prijs_el else "")
 
-            plaats_el = card.find("span", class_="plaats")
-            city = plaats_el.get_text(strip=True) if plaats_el else stad
+        status, status_text = _detect_status(card)
+        if status in _HIDDEN_STATUSES:
+            logger.debug(f"[nn] Project verborgen ({status}): {title}")
 
-            segment_el = card.find("span", class_="segment")
-            segment_text = segment_el.get_text(strip=True).lower() if segment_el else ""
-            if "koop" in segment_text:
-                type_ = "koop"
-            elif "huur" in segment_text:
-                type_ = "huur"
-            else:
-                type_ = None
+        lat = lon = None
+        if city:
+            lat, lon = _geocode(city)
 
-            units = None
-            units_match = re.search(r"\((\d+)\)", segment_text)
-            if units_match:
-                units = int(units_match.group(1))
+        return {
+            "title":              title,
+            "developer":          None,
+            "city":               city,
+            "type":               type_,
+            "price_min":          price_min,
+            "price_max":          price_max,
+            "units":              units,
+            "expected_date":      None,
+            "source":             "nieuwbouw-nederland.nl",
+            "latitude":           lat,
+            "longitude":          lon,
+            "url":                href,
+            "scraped_at":         scraped_at,
+            "status":             status,
+            "status_text":        status_text,
+            "is_active":          True,
+            "last_seen_at":       scraped_at,
+            "consecutive_missing": 0,
+        }
+    except Exception as e:
+        logger.debug(f"[nn] Kaart parse fout: {e}")
+        return None
 
-            prijs_el = card.find("span", class_="prijs")
-            price_min, price_max = _parse_prijzen(prijs_el.get_text() if prijs_el else "")
 
-            projecten.append({
-                "title": title,
-                "developer": None,
-                "city": city,
-                "type": type_.lower() if type_ else None,
-                "price_min": price_min,
-                "price_max": price_max,
-                "units": units,
-                "expected_date": None,
-                "source": "nieuwbouw-nederland.nl",
-                "url": href,
-                "scraped_at": scraped_at,
-            })
-        except Exception as e:
-            logger.debug(f"[nieuwbouw-nederland.nl] Kaart parse fout: {e}")
+def _scrape_nieuwbouw_nederland() -> list[dict]:
+    alle: list[dict]  = []
+    seen_urls: set[str] = set()
+    empty_streak = 0
+    scraped_at   = datetime.now(timezone.utc).isoformat()
 
-    logger.info(
-        f"[nieuwbouw] nieuwbouw-nederland.nl: {len(projecten)} bruikbare projecten "
-        f"na filtering voor '{stad}'"
-    )
-    return projecten
+    for page_num in range(1, _MAX_PAGES + 1):
+        if page_num == 1:
+            url = "https://www.nieuwbouw-nederland.nl/projecten/?sort=change_desc"
+        else:
+            url = f"https://www.nieuwbouw-nederland.nl/projecten/?sort=change_desc&p={page_num}"
+
+        logger.info(f"[nn] Pagina {page_num}/{_MAX_PAGES} ophalen…")
+        html, _ = _get(url, f"nn p{page_num}")
+        if not html:
+            logger.warning(f"[nn] Pagina {page_num}: geen HTML, stoppen")
+            break
+
+        soup  = BeautifulSoup(html, "html.parser")
+        cards = soup.find_all("article")
+        logger.info(f"[nn] Pagina {page_num}: {len(cards)} kaarten gevonden")
+
+        if not cards:
+            logger.info(f"[nn] Geen kaarten op pagina {page_num}, stoppen")
+            break
+
+        new_this_page = 0
+        for card in cards:
+            project = _parse_nn_card(card, scraped_at)
+            if project and project["url"] not in seen_urls:
+                seen_urls.add(project["url"])
+                alle.append(project)
+                new_this_page += 1
+
+        logger.info(f"[nn] Pagina {page_num}: {new_this_page} nieuwe projecten (totaal {len(alle)})")
+
+        if new_this_page == 0:
+            empty_streak += 1
+            if empty_streak >= _STOP_IF_NO_NEW:
+                logger.info(f"[nn] {_STOP_IF_NO_NEW} pagina's zonder nieuwe projecten, stoppen")
+                break
+        else:
+            empty_streak = 0
+
+        if page_num < _MAX_PAGES:
+            time.sleep(_PAGE_DELAY)
+
+    logger.info(f"[nn] Klaar: {len(alle)} projecten over {page_num} pagina's")
+    return alle
 
 
 # ─── nieuwbouw.nl ─────────────────────────────────────────────────────────────
-# Actual HTML structure (verified, Livewire/Alpine.js, server-rendered):
-#   <div data-gtm-track="project-card" data-project-id="01H963..." wire:key="project-01H963...">
-#     <h3 class="text-blue text-base font-semibold ...">Project Title</h3>
-#     ... (Tailwind classes, no stable non-utility class names)
-#   </div>
-# URL: constructed as https://nieuwbouw.nl/project/{data-project-id}/
-# for koop: /aanbod/koop/?locatie={stad}
+# Structuur (geverifieerd): <div data-gtm-track="project-card" data-project-id="...">
+#   <h3 class="text-blue ...">Titel</h3>
+# Paginering: ?page={n}&orderBy=RELEVANCE&direction=DESC
+# Aparte URLs voor huur en koop
 
-def _scrape_nieuwbouw_nl(stad: str) -> list[dict]:
-    projecten = []
+def _parse_nieuwbouw_nl_card(card, type_: str, scraped_at: str) -> dict | None:
+    try:
+        project_id = card.get("data-project-id", "")
+
+        a   = card.find("a", href=True)
+        if a:
+            href = a["href"]
+            if not href.startswith("http"):
+                href = "https://nieuwbouw.nl" + href
+        elif project_id:
+            href = f"https://nieuwbouw.nl/project/{project_id}/"
+        else:
+            return None
+
+        title_el = card.find("h3")
+        title    = title_el.get_text(strip=True) if title_el else None
+        if not title:
+            return None
+
+        # Stad: eerste korte tekst zonder cijfers die niet de titel is
+        city = None
+        for el in card.find_all(["p", "span", "div"]):
+            txt = el.get_text(strip=True)
+            if txt and txt != title and len(txt) < 40 and not re.search(r"\d", txt):
+                city = _normalize_city(txt)
+                break
+
+        card_text = card.get_text(" ", strip=True)
+
+        price_min = price_max = None
+        for el in card.find_all(string=re.compile(r"€")):
+            pm, px = _parse_prijs_range(str(el))
+            if pm:
+                price_min = min(pm, price_min) if price_min else pm
+            if px:
+                price_max = max(px, price_max) if price_max else px
+
+        units       = None
+        units_match = re.search(r"(\d+)\s*(?:woningen|appartementen|units)", card_text, re.I)
+        if units_match:
+            units = int(units_match.group(1))
+
+        date_match    = re.search(r"(?:Q[1-4]|oplevering)\s*:?\s*((?:Q[1-4]\s*)?20\d{2})", card_text, re.I)
+        expected_date = date_match.group(1).strip() if date_match else None
+
+        status, status_text = _detect_status(card)
+        if status in _HIDDEN_STATUSES:
+            logger.debug(f"[nieuwbouw.nl] Project verborgen ({status}): {title}")
+
+        lat = lon = None
+        if city:
+            lat, lon = _geocode(city)
+
+        return {
+            "title":              title,
+            "developer":          None,
+            "city":               city,
+            "type":               type_,
+            "price_min":          price_min,
+            "price_max":          price_max,
+            "units":              units,
+            "expected_date":      expected_date,
+            "source":             "nieuwbouw.nl",
+            "latitude":           lat,
+            "longitude":          lon,
+            "url":                href,
+            "scraped_at":         scraped_at,
+            "status":             status,
+            "status_text":        status_text,
+            "is_active":          True,
+            "last_seen_at":       scraped_at,
+            "consecutive_missing": 0,
+        }
+    except Exception as e:
+        logger.debug(f"[nieuwbouw.nl/{type_}] Kaart parse fout: {e}")
+        return None
+
+
+def _scrape_nieuwbouw_nl() -> list[dict]:
+    alle: list[dict]  = []
+    seen_urls: set[str] = set()
     scraped_at = datetime.now(timezone.utc).isoformat()
 
     for type_ in ("huur", "koop"):
-        url = f"https://nieuwbouw.nl/aanbod/{type_}/?locatie={quote_plus(stad)}"
-        logger.info(f"[nieuwbouw] Fetching nieuwbouw.nl/{type_} for stad: {stad}")
+        empty_streak = 0
+        base = f"https://nieuwbouw.nl/aanbod/{type_}/"
 
-        html, method = _fetch_html(url, f"nieuwbouw.nl/{type_}")
-        if not html:
-            continue
+        for page_num in range(1, _MAX_PAGES + 1):
+            if page_num == 1:
+                url = base
+            else:
+                url = f"{base}?page={page_num}&orderBy=RELEVANCE&direction=DESC"
 
-        soup = BeautifulSoup(html, "html.parser")
-        cards = soup.select('div[data-gtm-track="project-card"]')
-        logger.info(
-            f"[nieuwbouw] nieuwbouw.nl/{type_} ({method}): {len(cards)} raw cards for '{stad}'"
-        )
+            logger.info(f"[nieuwbouw.nl/{type_}] Pagina {page_num}/{_MAX_PAGES} ophalen…")
+            html, _ = _get(url, f"nieuwbouw.nl/{type_} p{page_num}")
+            if not html:
+                logger.warning(f"[nieuwbouw.nl/{type_}] Pagina {page_num}: geen HTML, stoppen")
+                break
 
-        for card in cards:
-            try:
-                project_id = card.get("data-project-id", "")
+            soup  = BeautifulSoup(html, "html.parser")
+            cards = soup.select('div[data-gtm-track="project-card"]')
+            logger.info(f"[nieuwbouw.nl/{type_}] Pagina {page_num}: {len(cards)} kaarten")
 
-                # URL: prefer an <a href> in the card, fall back to id-based URL
-                a_tag = card.find("a", href=True)
-                if a_tag:
-                    href = a_tag["href"]
-                    if not href.startswith("http"):
-                        href = "https://nieuwbouw.nl" + href
-                elif project_id:
-                    href = f"https://nieuwbouw.nl/project/{project_id}/"
-                else:
-                    continue
+            if not cards:
+                logger.info(f"[nieuwbouw.nl/{type_}] Geen kaarten op pagina {page_num}, stoppen")
+                break
 
-                title_el = card.find("h3")
-                title = title_el.get_text(strip=True) if title_el else None
-                if not title:
-                    continue
+            new_this_page = 0
+            for card in cards:
+                project = _parse_nieuwbouw_nl_card(card, type_, scraped_at)
+                if project and project["url"] not in seen_urls:
+                    seen_urls.add(project["url"])
+                    alle.append(project)
+                    new_this_page += 1
 
-                # City: look for small location text (typically after a pin icon)
-                # Tailwind classes aren't stable so search all small/p/span tags
-                city = stad
-                for el in card.find_all(["p", "span", "div"]):
-                    txt = el.get_text(strip=True)
-                    # Heuristic: short text without numbers that isn't the title
-                    if txt and len(txt) < 40 and txt != title and not re.search(r"\d", txt):
-                        city = txt
-                        break
+            logger.info(
+                f"[nieuwbouw.nl/{type_}] Pagina {page_num}: "
+                f"{new_this_page} nieuwe (totaal {len(alle)})"
+            )
 
-                # Price: look for any element containing "€"
-                price_min = price_max = None
-                for el in card.find_all(string=re.compile(r"€")):
-                    pm, px = _parse_prijzen(el)
-                    if pm:
-                        price_min = min(pm, price_min) if price_min else pm
-                    if px:
-                        price_max = max(px, price_max) if price_max else px
+            if new_this_page == 0:
+                empty_streak += 1
+                if empty_streak >= _STOP_IF_NO_NEW:
+                    logger.info(f"[nieuwbouw.nl/{type_}] {_STOP_IF_NO_NEW}x geen nieuw, stoppen")
+                    break
+            else:
+                empty_streak = 0
 
-                # Units: "X woningen" / "X appartementen"
-                units = None
-                card_text = card.get_text(" ", strip=True)
-                units_match = re.search(r"(\d+)\s*(?:woningen|appartementen|units)", card_text, re.I)
-                if units_match:
-                    units = int(units_match.group(1))
+            if page_num < _MAX_PAGES:
+                time.sleep(_PAGE_DELAY)
 
-                # Expected date
-                date_match = re.search(
-                    r"(?:oplevering|verwacht|Q[1-4])\s*:?\s*((?:Q[1-4]\s*)?20\d{2})",
-                    card_text, re.I
-                )
-                expected_date = date_match.group(1).strip() if date_match else None
-
-                projecten.append({
-                    "title": title,
-                    "developer": None,
-                    "city": city,
-                    "type": type_.lower() if type_ else None,
-                    "price_min": price_min,
-                    "price_max": price_max,
-                    "units": units,
-                    "expected_date": expected_date,
-                    "source": "nieuwbouw.nl",
-                    "url": href,
-                    "scraped_at": scraped_at,
-                })
-            except Exception as e:
-                logger.debug(f"[nieuwbouw.nl/{type_}] Kaart parse fout: {e}")
-
-        count_type = sum(1 for p in projecten if p["type"] == type_)
-        logger.info(
-            f"[nieuwbouw] nieuwbouw.nl/{type_}: {count_type} bruikbare projecten voor '{stad}'"
-        )
-
-    return projecten
+    logger.info(f"[nieuwbouw.nl] Klaar: {len(alle)} projecten")
+    return alle
 
 
-# ─── Scraper class ────────────────────────────────────────────────────────────
+# ─── Scraper classes ──────────────────────────────────────────────────────────
+# Twee aparte scrapers zodat elk individueel togglebaar en monitorbaar is.
+# Geo-cache (_geo_cache) is module-level en gedeeld — cities geocoded door de
+# eerste scraper zijn direct beschikbaar voor de tweede zonder extra Nominatim-calls.
 
-class NieuwbouwScraper(BaseScraper):
-    name = "nieuwbouw"
-    excluded_from_main_loop = True  # wekelijks via APScheduler, niet per 15 min
+class NieuwbouwNederlandScraper(BaseScraper):
+    name = "nieuwbouw_nederland"
+    category = "nieuwbouw"
+    excluded_from_main_loop = True
 
     def scrape(self, stad, min_prijs, max_prijs, types, radius_km=None):
         return []
 
-    def scrape_projecten(self, steden: list[str]) -> list[dict]:
-        alle = []
-        seen_urls: set[str] = set()
+    def scrape_projecten(self) -> list[dict]:
+        logger.info("[nieuwbouw_nederland] Scrape gestart")
+        return _scrape_nieuwbouw_nederland()
 
-        for stad in steden:
-            for scrape_fn, site_naam in [
-                (_scrape_nieuwbouw_nederland, "nieuwbouw-nederland.nl"),
-                (_scrape_nieuwbouw_nl, "nieuwbouw.nl"),
-            ]:
-                try:
-                    projecten = scrape_fn(stad)
-                except Exception as e:
-                    logger.error(f"[nieuwbouw] {site_naam} fout voor '{stad}': {e}")
-                    continue
 
-                before = len(alle)
-                for p in projecten:
-                    if p["url"] not in seen_urls:
-                        seen_urls.add(p["url"])
-                        alle.append(p)
+class NieuwbouwNlScraper(BaseScraper):
+    name = "nieuwbouw_nl"
+    category = "nieuwbouw"
+    excluded_from_main_loop = True
 
-                logger.info(
-                    f"[nieuwbouw] {site_naam} voor '{stad}': "
-                    f"{len(projecten)} gevonden, {len(alle) - before} nieuw na dedup"
-                )
+    def scrape(self, stad, min_prijs, max_prijs, types, radius_km=None):
+        return []
 
-        logger.info(f"[nieuwbouw] Totaal: {len(alle)} unieke projecten over {len(steden)} stad(en)")
-        return alle
+    def scrape_projecten(self) -> list[dict]:
+        logger.info("[nieuwbouw_nl] Scrape gestart")
+        return _scrape_nieuwbouw_nl()

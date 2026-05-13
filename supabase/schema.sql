@@ -46,14 +46,24 @@ CREATE TABLE sent_notifications (
 
 -- Aan/uit-schakelaar per scraper (beheerd via /admin/scrapers)
 CREATE TABLE scraper_config (
-  name       TEXT PRIMARY KEY,
-  enabled    BOOLEAN DEFAULT TRUE,
-  last_run   TIMESTAMPTZ,          -- tijdstip laatste succesvolle scrape-ronde
-  last_count INT,                  -- aantal listings gevonden in laatste ronde
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  name          TEXT PRIMARY KEY,
+  enabled       BOOLEAN DEFAULT TRUE,
+  category      TEXT DEFAULT 'huurwoningen',  -- 'huurwoningen' | 'nieuwbouw'
+  last_run      TIMESTAMPTZ,
+  last_count    INT,
+  status        TEXT DEFAULT 'onbekend',       -- 'actief' | 'fout' | 'onbekend'
+  error_message TEXT,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 -- Geen RLS-policies nodig: service_role bypasses RLS; authenticated users hebben geen toegang
 ALTER TABLE scraper_config ENABLE ROW LEVEL SECURITY;
+
+-- Migratie (uitvoeren in Supabase SQL editor als tabel al bestaat):
+-- ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'huurwoningen';
+-- ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'onbekend';
+-- ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS error_message TEXT;
+-- UPDATE scraper_config SET category = 'nieuwbouw' WHERE name IN ('nieuwbouw_nederland', 'nieuwbouw_nl');
+-- DELETE FROM scraper_config WHERE name = 'nieuwbouw';
 
 -- Gegenereerde motivatiebrieven per gebruiker
 CREATE TABLE motivation_letters (
@@ -91,7 +101,14 @@ CREATE TABLE nieuwbouw_projects (
   latitude DOUBLE PRECISION,
   longitude DOUBLE PRECISION,
   url TEXT UNIQUE NOT NULL,
-  scraped_at TIMESTAMPTZ DEFAULT NOW()
+  scraped_at TIMESTAMPTZ DEFAULT NOW(),
+  -- lifecycle & status (migratie: zie ALTER TABLE hieronder)
+  status TEXT DEFAULT 'available',
+  status_text TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  consecutive_missing INT DEFAULT 0
 );
 
 ALTER TABLE nieuwbouw_projects ENABLE ROW LEVEL SECURITY;
@@ -100,7 +117,21 @@ CREATE POLICY "nieuwbouw leesbaar voor ingelogden"
   TO authenticated
   USING (true);
 
-CREATE INDEX idx_nieuwbouw_city ON nieuwbouw_projects(city);
+CREATE INDEX idx_nieuwbouw_city     ON nieuwbouw_projects(city);
+CREATE INDEX idx_nieuwbouw_is_active ON nieuwbouw_projects(is_active);
+CREATE INDEX idx_nieuwbouw_status    ON nieuwbouw_projects(status);
+
+-- ============================================================
+-- Migratie: voer uit in Supabase SQL editor als tabel al bestaat
+-- ============================================================
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'available';
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS status_text TEXT;
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ DEFAULT NOW();
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW();
+-- ALTER TABLE nieuwbouw_projects ADD COLUMN IF NOT EXISTS consecutive_missing INT DEFAULT 0;
+-- CREATE INDEX IF NOT EXISTS idx_nieuwbouw_is_active ON nieuwbouw_projects(is_active);
+-- CREATE INDEX IF NOT EXISTS idx_nieuwbouw_status ON nieuwbouw_projects(status);
 
 -- Index voor snelle lookups
 CREATE INDEX idx_listings_stad ON listings(stad);

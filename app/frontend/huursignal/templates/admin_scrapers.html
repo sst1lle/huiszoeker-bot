@@ -4,43 +4,57 @@
 <div class="container">
   <div class="page-head">
     <h1>Scraper beheer</h1>
-    <p>{{ scrapers|length }} scraper(s) geregistreerd &middot; <a href="/admin" style="color:#2563eb">← Gebruikersbeheer</a></p>
+    <p>{{ total }} scraper(s) geregistreerd &middot; <a href="/admin" style="color:#2563eb">← Gebruikersbeheer</a></p>
   </div>
 
-  {% if scrapers %}
-  <div class="scraper-list">
-    {% for s in scrapers %}
-    <div class="scraper-row">
-      <div>
-        <div class="scraper-name">{{ s.name }}</div>
-        <div class="scraper-meta">
-          {% if s.enabled %}
-            <span style="color:#166534">● Actief</span>
-          {% else %}
-            <span style="color:#b91c1c">● Uitgeschakeld</span>
-          {% endif %}
-          &middot;
-          {% if s.last_run %}
-            laatste run {{ s.last_run[:16].replace('T', ' ') }}
-            &middot; {{ s.last_count or 0 }} listings
-          {% else %}
-            nog niet gedraaid
-          {% endif %}
+  {% if grouped %}
+    {% for groep_naam, scrapers in grouped %}
+    <div class="scraper-group">
+      <h2 class="scraper-group-title">{{ groep_naam }}</h2>
+      <div class="scraper-list">
+        {% for s in scrapers %}
+        {% set status = s.status or 'onbekend' %}
+        <div class="scraper-row">
+          <div class="scraper-info">
+            <div class="scraper-name">{{ s.display_name }}</div>
+            <div class="scraper-meta">
+              <span class="scraper-status-badge status-{{ status }}">
+                {% if status == 'actief' %}● Actief
+                {% elif status == 'fout' %}● Fout
+                {% else %}● Onbekend{% endif %}
+              </span>
+              <span style="color:var(--muted)">·</span>
+              {% if s.enabled %}
+                <span style="color:#166534">Ingeschakeld</span>
+              {% else %}
+                <span style="color:#b91c1c">Uitgeschakeld</span>
+              {% endif %}
+              {% if s.last_run %}
+              <span style="color:var(--muted)">·</span>
+              <span>Laatste run: {{ s.last_run[:16].replace('T', ' ') }}</span>
+              <span style="color:var(--muted)">·</span>
+              <span>{{ s.last_count or 0 }} {{ s.count_label }}</span>
+              {% else %}
+              <span style="color:var(--muted)">· Nog niet gedraaid</span>
+              {% endif %}
+            </div>
+            {% if s.error_message %}
+            <div class="scraper-error">⚠ {{ s.error_message }}</div>
+            {% endif %}
+          </div>
+          <div class="toggle-wrap">
+            <span class="toggle-label" id="lbl-{{ s.name }}">{{ 'Aan' if s.enabled else 'Uit' }}</span>
+            <label class="toggle" title="{{ 'Uitschakelen' if s.enabled else 'Inschakelen' }}">
+              <input type="checkbox" {{ 'checked' if s.enabled else '' }}
+                     onchange="toggleScraper('{{ s.name }}', this)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
-      </div>
-      <div class="toggle-wrap">
-        <span style="font-size:13px;color:var(--muted)" id="lbl-{{ s.name }}">
-          {{ 'Aan' if s.enabled else 'Uit' }}
-        </span>
-        <label class="toggle" title="{{ 'Uitschakelen' if s.enabled else 'Inschakelen' }}">
-          <input type="checkbox" {{ 'checked' if s.enabled else '' }}
-                 onchange="toggleScraper('{{ s.name }}', this)">
-          <span class="toggle-slider"></span>
-        </label>
+        {% endfor %}
       </div>
     </div>
     {% endfor %}
-  </div>
   {% else %}
   <div class="empty">
     <div class="icon">🤖</div>
@@ -64,7 +78,7 @@ async function toggleScraper(name, checkbox) {
     if (d.ok) {
       lbl.textContent = enabled ? 'Aan' : 'Uit';
     } else {
-      checkbox.checked = !enabled; // terugdraaien bij fout
+      checkbox.checked = !enabled;
     }
   } catch {
     checkbox.checked = !enabled;

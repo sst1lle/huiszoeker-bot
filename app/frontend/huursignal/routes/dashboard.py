@@ -16,11 +16,13 @@ LEEFTIJD_OPTIES = [
 ]
 
 
+_HIDDEN_STATUSES = {"sold_out", "rented_out", "under_option", "registration_closed"}
+
+
 def _query_nieuwbouw(db, stad: str) -> list[dict]:
     """
-    Zoek nieuwbouwprojecten op stad.
-    Normaliseert koppeltekens naar spaties zodat "den-haag" matcht op "Den Haag".
-    Logt debug-info zodat lege resultaten makkelijk te diagnosticeren zijn.
+    Zoek actieve nieuwbouwprojecten op stad.
+    Verbergt projecten met uitverkochte/verhuurd/optie/gesloten status.
     """
     stad_search = stad.replace("-", " ").strip()
 
@@ -28,20 +30,25 @@ def _query_nieuwbouw(db, stad: str) -> list[dict]:
         db.table("nieuwbouw_projects")
           .select("*")
           .ilike("city", f"%{stad_search}%")
+          .eq("is_active", True)
           .order("scraped_at", desc=True)
           .execute()
           .data or []
     )
 
+    # Filter verborgen statussen in Python (is_active vangt lifecycle op, status vangt beschikbaarheid)
+    zichtbaar = [p for p in projecten if p.get("status") not in _HIDDEN_STATUSES]
+    verborgen = len(projecten) - len(zichtbaar)
+
     logger.info(
-        f"[dashboard] nieuwbouw query stad='{stad}' → zoekterm='{stad_search}' → {len(projecten)} rijen"
+        f"[dashboard] nieuwbouw query stad='{stad}' → zoekterm='{stad_search}' → "
+        f"{len(projecten)} actief, {verborgen} verborgen op status → {len(zichtbaar)} getoond"
     )
 
     if not projecten:
-        # Log steekproef van steden in de DB zodat je ziet waarom er geen match is
         sample = (
             db.table("nieuwbouw_projects")
-              .select("city, source")
+              .select("city, source, is_active")
               .limit(10)
               .execute()
               .data or []
@@ -51,12 +58,11 @@ def _query_nieuwbouw(db, stad: str) -> list[dict]:
             f"Steden in DB (steekproef): {[r.get('city') for r in sample]}"
         )
 
-    # Normaliseer type naar lowercase voor template-vergelijking
-    for p in projecten:
+    for p in zichtbaar:
         if p.get("type"):
             p["type"] = p["type"].lower()
 
-    return projecten
+    return zichtbaar
 
 
 @dash_bp.route("/dashboard")

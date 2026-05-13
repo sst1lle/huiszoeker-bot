@@ -80,12 +80,50 @@ def api_admin_user_delete(user_id):
     return jsonify({"ok": True})
 
 
+_SCRAPER_DISPLAY = {
+    "pararius":           "Pararius",
+    "kamernet":           "Kamernet",
+    "funda":              "Funda",
+    "nieuwbouw_nederland": "nieuwbouw-nederland.nl",
+    "nieuwbouw_nl":       "nieuwbouw.nl",
+}
+
+_CAT_ORDER = ["huurwoningen", "nieuwbouw"]
+_CAT_LABELS = {
+    "huurwoningen": "Huurwoningen",
+    "nieuwbouw":    "Nieuwbouw",
+}
+_COUNT_LABEL = {
+    "huurwoningen": "listings",
+    "nieuwbouw":    "projecten",
+}
+
+
 @admin_bp.route("/admin/scrapers")
 @admin_required
 def admin_scrapers():
     db = get_db()
-    configs = db.table("scraper_config").select("*").order("name").execute().data or []
-    return render_template("admin_scrapers.html", scrapers=configs)
+    rows = db.table("scraper_config").select("*").order("name").execute().data or []
+
+    for r in rows:
+        r["display_name"] = _SCRAPER_DISPLAY.get(r["name"], r["name"])
+        cat = r.get("category") or "huurwoningen"
+        r["category"] = cat
+        r["count_label"] = _COUNT_LABEL.get(cat, "items")
+
+    groups: dict[str, list] = {}
+    for r in rows:
+        groups.setdefault(r["category"], []).append(r)
+
+    grouped = [
+        (_CAT_LABELS.get(cat, cat.title()), groups[cat])
+        for cat in _CAT_ORDER if cat in groups
+    ]
+    for cat, scrapers in groups.items():
+        if cat not in _CAT_ORDER:
+            grouped.append((cat.title(), scrapers))
+
+    return render_template("admin_scrapers.html", grouped=grouped, total=len(rows))
 
 
 @admin_bp.route("/api/admin/scrapers/<name>", methods=["POST"])

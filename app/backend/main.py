@@ -145,33 +145,49 @@ def upsert_listing(listing: dict) -> str | None:
 def registreer_scrapers(scrapers: list) -> None:
     """
     Registreer ontdekte scrapers in scraper_config als ze er nog niet instaan.
-    Wordt eenmalig aangeroepen bij botstart — zorgt dat /admin/scrapers ze toont.
+    Verwijdert ook de verouderde aggregatie-entry "nieuwbouw" die vervangen is
+    door aparte "nieuwbouw_nederland" en "nieuwbouw_nl" entries.
     """
     try:
         db = get_db()
+        # Verwijder verouderd aggregatie-entry
+        db.table("scraper_config").delete().eq("name", "nieuwbouw").execute()
+
         bestaand = {c["name"] for c in (db.table("scraper_config").select("name").execute().data or [])}
         for s in scrapers:
             if s.name not in bestaand:
-                db.table("scraper_config").insert({"name": s.name, "enabled": True}).execute()
+                db.table("scraper_config").insert({
+                    "name":     s.name,
+                    "enabled":  True,
+                    "category": getattr(s, "category", "huurwoningen"),
+                    "status":   "onbekend",
+                }).execute()
                 print(f"[scrapers] Geregistreerd in scraper_config: {s.name}", flush=True)
     except Exception as e:
         print(f"[scrapers] Kon scrapers niet registreren: {e}", flush=True)
 
 
-def update_scraper_stats(counts: dict) -> None:
+def update_scraper_stats(counts: dict, errors: dict | None = None) -> None:
     """
-    Schrijf last_run en last_count terug naar scraper_config na elke scrape-ronde.
+    Schrijf last_run, last_count, status en error_message terug naar scraper_config.
     counts: {scraper_name: total_listings_found}
+    errors: {scraper_name: error_message_str}  — optioneel
     """
-    if not counts:
+    if not counts and not errors:
         return
     nu = datetime.now(timezone.utc).isoformat()
+    errors = errors or {}
     try:
         db = get_db()
-        for name, count in counts.items():
+        alle_namen = set(counts) | set(errors)
+        for name in alle_namen:
+            count = counts.get(name, 0)
+            err = errors.get(name)
             db.table("scraper_config").update({
-                "last_run":   nu,
-                "last_count": count,
+                "last_run":      nu,
+                "last_count":    count,
+                "status":        "fout" if err else "actief",
+                "error_message": err,
             }).eq("name", name).execute()
     except Exception as e:
         print(f"[scrapers] Kon scraper stats niet opslaan: {e}", flush=True)
@@ -325,37 +341,125 @@ async def verwerk_notificaties(prefs: list) -> int:
     return gestuurd
 
 
-def scrape_nieuwbouw_job(nieuwbouw_scraper) -> None:
-    """Wekelijkse job: scrape nieuwbouwprojecten en upsert naar Supabase."""
+def _update_nieuwbouw_lifecycle(db, scraped_urls: set) -> None:
+    """
+    Na elke scrape: increment consecutive_missing voor projecten die niet gezien zijn.
+    Na 3 opeenvolgende missende scrapes → is_active = False.
+    Projecten die herVerschijnen na inactiviteit → log heractivering (upsert reset al de velden).
+    """
+    from collections import defaultdict
+    try:
+        existing = (
+            db.table("nieuwbouw_projects")
+              .select("url, is_active, consecutive_missing, status")
+              .execute()
+              .data or []
+        )
+
+        reactivated: list[str] = []
+        missing_increment: dict[str, int] = {}
+        to_deactivate: list[str] = []
+
+        for row in existing:
+            url = row["url"]
+            is_active = row.get("is_active", True)
+            missing = row.get("consecutive_missing") or 0
+
+            if url in scraped_urls:
+                if not is_active:
+                    reactivated.append(url)
+                    # is_active + consecutive_missing al gereset via upsert
+            else:
+                new_count = missing + 1
+                missing_increment[url] = new_count
+                if new_count >= 3 and is_active:
+                    to_deactivate.append(url)
+                    print(
+                        f"[nieuwbouw] Project inactief na {new_count}x niet gezien: "
+                        f"{url} (status: {row.get('status')})",
+                        flush=True,
+                    )
+
+        for url in reactivated:
+            print(f"[nieuwbouw] Project heractiveerd: {url}", flush=True)
+
+        if to_deactivate:
+            db.table("nieuwbouw_projects").update({"is_active": False}).in_("url", to_deactivate).execute()
+
+        # Batch per unieke teller om N queries te beperken
+        by_count: dict[int, list] = defaultdict(list)
+        for url, count in missing_increment.items():
+            by_count[count].append(url)
+        for count, urls in by_count.items():
+            db.table("nieuwbouw_projects").update({"consecutive_missing": count}).in_("url", urls).execute()
+
+        print(
+            f"[nieuwbouw] Lifecycle: {len(reactivated)} heractiveerd, "
+            f"{len(to_deactivate)} inactief, "
+            f"{len(missing_increment)} niet gezien deze scrape",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[nieuwbouw] Lifecycle update fout: {e}", flush=True)
+
+
+def scrape_nieuwbouw_job(nieuwbouw_scrapers: list) -> None:
+    """
+    Wekelijkse job: scrapet elke nieuwbouwbron afzonderlijk.
+    Elke scraper heeft zijn eigen enabled-toggle, last_run en status in scraper_config.
+    """
     print("[nieuwbouw] Wekelijkse scrape gestart", flush=True)
     try:
         db = get_db()
-        prefs = db.table("user_preferences").select("stad").execute().data or []
-        # stad kan meerdere steden bevatten als komma-gescheiden string (bijv. "Utrecht, Amsterdam")
-        # strip ook leading/trailing hyphens die ontstaan door slechte opslag (bijv. "-Amsterdam")
-        steden = list({
-            s.strip().strip("-").strip()
-            for p in prefs if p.get("stad")
-            for s in p["stad"].split(",")
-            if s.strip().strip("-").strip()
-        })
-        if not steden:
-            print("[nieuwbouw] Geen steden gevonden in gebruikersvoorkeuren", flush=True)
-            return
+        nu = datetime.now(timezone.utc).isoformat()
+        configs = {c["name"]: c["enabled"] for c in (
+            db.table("scraper_config").select("name, enabled").execute().data or []
+        )}
 
-        print(f"[nieuwbouw] Scraping voor steden: {steden}", flush=True)
-        projecten = nieuwbouw_scraper.scrape_projecten(steden)
+        all_scraped_urls: set = set()
 
-        geslaagd = mislukt = 0
-        for project in projecten:
+        for scraper in nieuwbouw_scrapers:
+            if not configs.get(scraper.name, True):
+                print(f"[nieuwbouw] {scraper.name} uitgeschakeld — overgeslagen", flush=True)
+                continue
+
+            print(f"[nieuwbouw] === Start {scraper.name} ===", flush=True)
             try:
-                db.table("nieuwbouw_projects").upsert(project, on_conflict="url").execute()
-                geslaagd += 1
-            except Exception as e:
-                print(f"[nieuwbouw] Upsert mislukt voor {project.get('url')}: {e}", flush=True)
-                mislukt += 1
+                projecten = scraper.scrape_projecten()
 
-        print(f"[nieuwbouw] Klaar — {geslaagd} opgeslagen, {mislukt} mislukt", flush=True)
+                geslaagd = mislukt = hidden = 0
+                for project in projecten:
+                    try:
+                        db.table("nieuwbouw_projects").upsert(project, on_conflict="url").execute()
+                        all_scraped_urls.add(project["url"])
+                        geslaagd += 1
+                        if project.get("status") in ("sold_out", "rented_out", "under_option", "registration_closed"):
+                            hidden += 1
+                    except Exception as e:
+                        print(f"[nieuwbouw] Upsert mislukt voor {project.get('url')}: {e}", flush=True)
+                        mislukt += 1
+
+                print(
+                    f"[nieuwbouw] {scraper.name}: {geslaagd} opgeslagen "
+                    f"({hidden} verborgen status), {mislukt} mislukt",
+                    flush=True,
+                )
+                db.table("scraper_config").update({
+                    "last_run":      nu,
+                    "last_count":    geslaagd,
+                    "status":        "actief",
+                    "error_message": None,
+                }).eq("name", scraper.name).execute()
+
+            except Exception as e:
+                print(f"[nieuwbouw] {scraper.name} fout: {e}", flush=True)
+                db.table("scraper_config").update({
+                    "status":        "fout",
+                    "error_message": str(e)[:500],
+                }).eq("name", scraper.name).execute()
+
+        _update_nieuwbouw_lifecycle(db, all_scraped_urls)
+
     except Exception as e:
         print(f"[nieuwbouw] ❌ Job fout: {e}", flush=True)
 
@@ -372,21 +476,22 @@ if __name__ == '__main__':
     storage = ListingStorage()
 
     # Wekelijkse nieuwbouw-scrape via APScheduler (los van de 15-minuten loop)
-    nieuwbouw_scraper = next((s for s in alle_scrapers if s.name == "nieuwbouw"), None)
-    if nieuwbouw_scraper:
+    nieuwbouw_scrapers = [s for s in alle_scrapers if getattr(s, "category", "") == "nieuwbouw"]
+    if nieuwbouw_scrapers:
+        namen = [s.name for s in nieuwbouw_scrapers]
         scheduler = BackgroundScheduler(timezone="Europe/Amsterdam")
         scheduler.add_job(
             scrape_nieuwbouw_job,
             trigger="interval",
             weeks=1,
-            args=[nieuwbouw_scraper],
+            args=[nieuwbouw_scrapers],
             id="nieuwbouw_weekly",
             next_run_time=datetime.now(timezone.utc),  # ook direct bij opstarten
         )
         scheduler.start()
-        print("[nieuwbouw] Wekelijkse scheduler gestart", flush=True)
+        print(f"[nieuwbouw] Wekelijkse scheduler gestart voor: {namen}", flush=True)
     else:
-        print("[nieuwbouw] ⚠️ Scraper niet gevonden — wekelijkse job overgeslagen", flush=True)
+        print("[nieuwbouw] ⚠️ Geen nieuwbouw-scrapers gevonden — wekelijkse job overgeslagen", flush=True)
 
     while True:
         try:
@@ -412,6 +517,7 @@ if __name__ == '__main__':
             combis = bouw_combis(scrapers, prefs)
             alle_woningen = []
             counts_per_scraper: dict = {}  # scraper.name → totaal gevonden listings
+            errors_per_scraper: dict = {}  # scraper.name → laatste foutmelding
 
             for params in combis.values():
                 scraper = params["scraper"]
@@ -425,6 +531,7 @@ if __name__ == '__main__':
                     )
                 except Exception as e:
                     print(f"[scrapers] ❌ {scraper.name} fout: {e}", flush=True)
+                    errors_per_scraper[scraper.name] = str(e)[:500]
                     asyncio.run(stuur_warning(
                         f"⚠️ {scraper.name} fout!\n"
                         f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}\n"
@@ -434,7 +541,7 @@ if __name__ == '__main__':
                 alle_woningen.extend(woningen)
                 counts_per_scraper[scraper.name] = counts_per_scraper.get(scraper.name, 0) + len(woningen)
 
-            update_scraper_stats(counts_per_scraper)
+            update_scraper_stats(counts_per_scraper, errors_per_scraper)
 
             _cs = BaseScraper._stats
             print(

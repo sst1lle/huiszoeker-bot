@@ -46,6 +46,7 @@ class BaseScraper(ABC):
     """
 
     name: str = "base"
+    category: str = "huurwoningen"  # groepering in admin dashboard
     robots_txt_compliant: bool = True  # documenteer per subklasse
     request_delay_seconds: float = 2.0  # ethisch scrapen
     uses_types: bool = True  # False als scraper types intern negeert (bijv. Pararius geeft altijd alle typen)
