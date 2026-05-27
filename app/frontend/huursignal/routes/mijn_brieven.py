@@ -1,6 +1,8 @@
 from flask import Blueprint, session, jsonify, render_template
 
 from db import get_db
+# PRIVACY-FIX: decrypt letter_text before rendering (stored encrypted)
+from crypto import safe_decrypt
 from ..decorators import login_required
 
 mijn_brieven_bp = Blueprint("mijn_brieven", __name__)
@@ -18,6 +20,9 @@ def mijn_brieven():
         .execute()
         .data or []
     )
+    # PRIVACY-FIX: decrypt letter_text for each row before passing to template
+    for b in brieven:
+        b["letter_text"] = safe_decrypt(b.get("letter_text"))
     return render_template("mijn_brieven.html", brieven=brieven)
 
 

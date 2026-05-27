@@ -9,4 +9,20 @@
   {% include "_pref_form.html" %}
 </div>
 <script src="{{ url_for('static', filename='js/preferences.js') }}"></script>
+
+<!-- PRIVACY-FIX: account deletion — hard deletes all user data via cascade -->
+<div class="danger-zone">
+  <h3>Account verwijderen</h3>
+  <p>Dit verwijdert je account en alle bijbehorende gegevens permanent: je voorkeuren, motivatiebrieven en meldingsgeschiedenis. Deze actie kan niet ongedaan worden gemaakt.</p>
+  <button class="btn btn-danger" onclick="bevestigVerwijdering()">Account permanent verwijderen</button>
+</div>
+
+<script>
+function bevestigVerwijdering() {
+  if (!confirm('Weet je het zeker? Je account en alle gegevens worden permanent verwijderd.')) return;
+  fetch('/instellingen/verwijder-account', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.ok) window.location.href = '/'; });
+}
+</script>
 {% endblock %}

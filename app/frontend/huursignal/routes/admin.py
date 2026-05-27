@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, render_template
 
 from db import get_db
+# PRIVACY-FIX: decrypt naam before displaying in admin UI
+from crypto import safe_decrypt
 from ..decorators import admin_required
 from ..helpers import WONING_TYPES
 
@@ -26,12 +28,13 @@ def admin_page():
         users.append({
             "user_id":        u.id,
             "email":          u.email or "",
-            "naam":           pref.get("naam") or "",
+            # PRIVACY-FIX: decrypt naam and telegram_chat_id before displaying in admin UI
+            "naam":           safe_decrypt(pref.get("naam")) or "",
             "stad":           pref.get("stad") or "",
             "min_prijs":      pref.get("min_prijs") or 0,
             "max_prijs":      pref.get("max_prijs") or 0,
             "type_woning":    pref.get("type_woning") or [],
-            "telegram_chat_id": pref.get("telegram_chat_id") or "",
+            "telegram_chat_id": safe_decrypt(pref.get("telegram_chat_id")) or "",
             "radius_km":      pref.get("radius_km"),
             "has_prefs":      bool(pref),
         })

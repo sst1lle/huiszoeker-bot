@@ -11,6 +11,7 @@ from telegram import Bot
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from db import get_db
+from crypto import safe_decrypt  # PRIVACY-FIX: decrypt PII fields before use
 from scrapers.base import BaseScraper
 from deduplicator import Deduplicator
 from storage import ListingStorage
@@ -391,8 +392,9 @@ async def verwerk_notificaties(prefs: list) -> int:
 
     for pref in prefs:
         user_id = pref.get("user_id")
-        chat_id = (pref.get("telegram_chat_id") or "").strip()
-        naam = pref.get("naam") or user_id
+        # PRIVACY-FIX: decrypt encrypted PII fields before use
+        chat_id = (safe_decrypt(pref.get("telegram_chat_id")) or "").strip()
+        naam = safe_decrypt(pref.get("naam")) or user_id
 
         if not chat_id or not user_id:
             continue

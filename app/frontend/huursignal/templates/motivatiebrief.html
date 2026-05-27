@@ -52,6 +52,15 @@
         <input type="url" name="listing_url" value="{{ form.listing_url if form else '' }}" placeholder="https://www.pararius.nl/...">
       </div>
 
+      <!-- PRIVACY-FIX: explicit opt-in, unchecked by default — no implicit storage -->
+      <div class="field optin-field">
+        <label class="optin-label">
+          <input type="checkbox" name="opslaan_brief" id="opslaanBrief">
+          Sla deze brief op in mijn account
+        </label>
+        <p class="hint" style="margin:2px 0 0">Niet aangevinkt = brief wordt alleen getoond, niet opgeslagen. Opgeslagen brieven worden na 90 dagen automatisch verwijderd.</p>
+      </div>
+
       <div class="form-actions">
         <button type="submit" class="btn btn-primary" style="width:auto" id="submitBtn">
           Genereer motivatiebrief

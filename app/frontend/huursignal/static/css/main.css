@@ -175,6 +175,17 @@ nav { background: var(--surface); border-bottom: 1px solid var(--border); positi
 .empty h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
 .empty p { color: var(--muted); font-size: 14px; }
 .empty a { color: #2563eb; }
+.optin-field { flex-direction: column !important; align-items: flex-start !important; gap: 4px !important; }
+.optin-label { display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+.optin-label input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #2563eb; }
+.danger-zone { max-width: 580px; margin: 40px auto 60px; padding: 20px; border: 1px solid #fecaca;
+               border-radius: 10px; background: #fff5f5; }
+[data-theme="dark"] .danger-zone { background: #2d1a1a; border-color: #7f1d1d; }
+.danger-zone h3 { font-size: 15px; font-weight: 700; color: #b91c1c; margin-bottom: 6px; }
+.danger-zone p { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+.btn-danger { background: #dc2626; color: #fff; border: none; border-radius: 7px;
+              padding: 9px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-danger:hover { background: #b91c1c; }
 
 .form-page { max-width: 580px; margin: 36px auto 60px; padding: 0 20px; }
 .form-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }

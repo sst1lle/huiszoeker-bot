@@ -2,6 +2,8 @@ import os
 from flask import Blueprint, session, request, render_template, redirect, url_for
 
 from db import get_db
+# PRIVACY-FIX: letter_text encrypted at rest (contains personal narrative: name, situation, reasons)
+from crypto import encrypt, safe_decrypt
 from ..decorators import login_required
 
 motivatiebrief_bp = Blueprint("motivatiebrief", __name__)
@@ -84,16 +86,19 @@ def motivatiebrief():
         )
         brief = response.choices[0].message.content.strip()
 
-        try:
-            get_db().table("motivation_letters").insert({
-                "user_id": session["user_id"],
-                "listing_url": f.get("listing_url") or None,
-                "listing_title": f.get("woning") or None,
-                "letter_text": brief,
-                "system_prompt_used": systeem_prompt,
-            }).execute()
-        except Exception:
-            pass
+        # PRIVACY-FIX: only save when user explicitly opts in (default unchecked)
+        if f.get("opslaan_brief") == "on":
+            try:
+                get_db().table("motivation_letters").insert({
+                    "user_id":           session["user_id"],
+                    "listing_url":       f.get("listing_url") or None,
+                    "listing_title":     f.get("woning") or None,
+                    # PRIVACY-FIX: encrypt letter_text — contains personal narrative (name, situation, reasons)
+                    "letter_text":       encrypt(brief),
+                    "system_prompt_used": systeem_prompt,
+                }).execute()
+            except Exception:
+                pass
 
         return render_template("motivatiebrief.html", naam=naam, form=f, brief=brief, systeem_prompt=systeem_prompt)
 
