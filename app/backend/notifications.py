@@ -20,14 +20,6 @@ def resolve_listing_id(db, listing: dict) -> str | None:
     return str(rows[0]["id"]) if rows else None
 
 
-def _log_notif(user_id: str, listing_id: str | None, status: str, url: str = "") -> None:
-    extra = f" url={url}" if url and status != "new" else ""
-    if status == "new" and url:
-        extra = f" url={url}"
-    lid = listing_id or "?"
-    print(f"[notif] user_id={user_id} listing_id={lid} status={status}{extra}", flush=True)
-
-
 def claim_notification(db, user_id: str, listing_id: str) -> bool:
     """
     Claim (user_id, listing_id) in sent_notifications.
@@ -128,9 +120,24 @@ def maak_bericht(listing: dict) -> str:
     return "\n".join(regels)
 
 
-async def verwerk_notificaties(prefs: list) -> int:
+async def verwerk_notificaties(
+    prefs: list,
+    scrape_urls: set[str] | None = None,
+) -> int:
+    """
+    Verwerk notificaties alleen voor listings uit de huidige scrape (scrape_urls).
+    """
+    if not scrape_urls:
+        print("[notificaties] skip_geen_scrape_urls", flush=True)
+        return 0
+
     db = get_db()
     gestuurd = 0
+    print(
+        f"[notificaties] cycle_scope scrape_urls={len(scrape_urls)} "
+        f"users={len(prefs)}",
+        flush=True,
+    )
 
     for pref in prefs:
         user_id = pref.get("user_id")
@@ -140,16 +147,29 @@ async def verwerk_notificaties(prefs: list) -> int:
         if not chat_id or not user_id:
             continue
 
-        kandidaten = get_listings_for_user(pref)
+        kandidaten = get_listings_for_user(pref, scrape_urls)
         by_listing_id: dict[str, dict] = {}
         pairs: list[dict] = []
+        skip_no_id = 0
+
         for listing in kandidaten:
             listing_id = resolve_listing_id(db, listing)
             if not listing_id:
-                _log_notif(user_id, None, "skip_no_id", listing.get("url", ""))
+                skip_no_id += 1
                 continue
             by_listing_id[listing_id] = listing
             pairs.append({"user_id": user_id, "listing_id": listing_id})
+
+        if not pairs:
+            if skip_no_id:
+                print(
+                    f"[notif] user={naam} kandidaten=0 skip_no_id={skip_no_id}",
+                    flush=True,
+                )
+            continue
+
+        user_sent = 0
+        duplicates = 0
 
         for i in range(0, len(pairs), UPSERT_BATCH):
             chunk = pairs[i : i + UPSERT_BATCH]
@@ -159,12 +179,18 @@ async def verwerk_notificaties(prefs: list) -> int:
             for p in chunk:
                 lid = p["listing_id"]
                 if lid not in claimed_ids:
-                    _log_notif(user_id, lid, "duplicate")
+                    duplicates += 1
                     continue
                 listing = by_listing_id[lid]
-                _log_notif(user_id, lid, "new", listing.get("url", ""))
                 await stuur_telegram(chat_id, maak_bericht(listing))
+                user_sent += 1
                 gestuurd += 1
                 print(f"[notificaties] → {naam}: {listing.get('url')}", flush=True)
+
+        print(
+            f"[notif] user={naam} kandidaten={len(pairs)} "
+            f"sent={user_sent} duplicate={duplicates} skip_no_id={skip_no_id}",
+            flush=True,
+        )
 
     return gestuurd

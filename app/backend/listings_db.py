@@ -17,7 +17,6 @@ _EXISTING_LISTING_COLS = (
     "foto_url, external_id, postcode, wijk, buurt, lat, lng, eerste_gezien, created_at"
 )
 
-_NOTIFICATIE_LIMIT = 1000
 _SKIP_TYPE_CHECK = {"funda", "pararius"}
 _PARKING_MARKERS = (
     "parkeergelegenheid",
@@ -119,13 +118,19 @@ def is_parking_listing(listing: dict) -> bool:
     return any(marker in haystack for marker in _PARKING_MARKERS)
 
 
-def get_listings_for_user(pref: dict) -> list:
+def get_listings_for_user(pref: dict, scrape_urls: set[str] | None = None) -> list:
     """
-    Kandidaat-listings voor notificaties: filter in SQL (stad, prijs, beschikbaar)
-    + Python (wijk/type/parking). Dedupe gebeurt via claim_sent_notification (INSERT).
+    Kandidaat-listings voor notificaties: alleen URLs uit de huidige scrape-cycle,
+    gefilterd in SQL (stad, prijs, beschikbaar) + Python (wijk/type/parking).
     """
+    if not scrape_urls:
+        return []
+
+    urls = sorted(u.strip() for u in scrape_urls if u and u.strip())
+    if not urls:
+        return []
+
     db = get_db()
-    user_id = pref.get("user_id")
     min_prijs = pref.get("min_prijs") or 0
     max_prijs = pref.get("max_prijs") or 9999
     types = pref.get("type_woning") or []
@@ -137,25 +142,26 @@ def get_listings_for_user(pref: dict) -> list:
     gewenste_wijken = pref.get("gewenste_wijken") or []
     wijk_filter = {w.strip().lower() for w in gewenste_wijken if w and w.strip()}
 
-    listings = (
-        db.table("listings")
-        .select("*")
-        .in_("stad", steden_values)
-        .eq("beschikbaar", True)
-        .gte("prijs", min_prijs)
-        .lte("prijs", max_prijs)
-        .order("created_at", desc=True)
-        .limit(_NOTIFICATIE_LIMIT)
-        .execute()
-        .data
-        or []
-    )
-
-    steden_log = ",".join(stad_slugs_uit_pref(pref.get("stad") or ""))
-    print(
-        f"[notificaties] Filtered listings via SQL: stad={steden_log} count={len(listings)}",
-        flush=True,
-    )
+    listings: list[dict] = []
+    seen_urls: set[str] = set()
+    for i in range(0, len(urls), UPSERT_BATCH):
+        chunk = urls[i : i + UPSERT_BATCH]
+        for row in (
+            db.table("listings")
+            .select("*")
+            .in_("url", chunk)
+            .in_("stad", steden_values)
+            .eq("beschikbaar", True)
+            .gte("prijs", min_prijs)
+            .lte("prijs", max_prijs)
+            .execute()
+            .data
+            or []
+        ):
+            url = row.get("url")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                listings.append(row)
 
     kandidaten = []
     for listing in listings:
@@ -174,11 +180,5 @@ def get_listings_for_user(pref: dict) -> list:
                 continue
 
         kandidaten.append(listing)
-
-    if kandidaten:
-        print(
-            f"[notificaties] Kandidaten for user={user_id}: count={len(kandidaten)}",
-            flush=True,
-        )
 
     return kandidaten

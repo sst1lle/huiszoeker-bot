@@ -27,11 +27,12 @@ from db import get_db
 logger = logging.getLogger(__name__)
 
 PDOK_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
-_HTTP_TIMEOUT = 10.0
+_HTTP_TIMEOUT = float(os.getenv("GEOCODE_PDOK_TIMEOUT_SEC", "5"))
 _USER_AGENT = "huiszoeker-geocoder/1.0"
 _PDOK_CONCURRENCY = 6
 _FLUSH_CHUNK = 50
-_PENDING_MAX = 500
+_PENDING_MAX = int(os.getenv("GEOCODE_PENDING_MAX", "2000"))
+_BACKPRESSURE_FLUSH_TIMEOUT_SEC = float(os.getenv("GEOCODE_BACKPRESSURE_FLUSH_TIMEOUT_SEC", "8"))
 _FLUSH_INTERVAL_SEC = 45
 _FLUSH_RETRY_ATTEMPTS = 3
 MAX_INFLIGHT_SIZE = int(os.getenv("GEOCODE_MAX_INFLIGHT", "500"))
@@ -65,6 +66,7 @@ _MISS = object()
 
 _daemon_stop = threading.Event()
 _daemon_started = False
+_backpressure_flush_task: asyncio.Task | None = None
 
 
 def ensure_geocode_flush_daemon() -> None:
@@ -88,28 +90,32 @@ def _cancel_inflight_entry(entry: dict | None) -> None:
         task.cancel()
 
 
-def _inflight_safety_prune() -> None:
-    """Trim inflight bij overschrijding: eerst vorige cycle, anders oudste 50%."""
-    with _lock:
-        size = len(_inflight)
-        if size <= MAX_INFLIGHT_SIZE:
-            return
-        logger.warning(f"[geocode] inflight_safety_trigger size={size}")
+def _inflight_safety_prune_locked() -> None:
+    """Trim inflight bij overschrijding. Caller moet _lock al vasthouden."""
+    size = len(_inflight)
+    if size <= MAX_INFLIGHT_SIZE:
+        return
+    logger.warning(f"[geocode] inflight_safety_trigger size={size}")
 
-        for key in list(_inflight):
-            if _inflight[key]["ts"] < _cycle_started_ts:
-                _cancel_inflight_entry(_inflight.pop(key, None))
-
-        if len(_inflight) <= MAX_INFLIGHT_SIZE:
-            return
-
-        sorted_keys = sorted(_inflight, key=lambda k: _inflight[k]["ts"])
-        drop_n = max(1, len(sorted_keys) // 2)
-        for key in sorted_keys[:drop_n]:
+    for key in list(_inflight):
+        if _inflight[key]["ts"] < _cycle_started_ts:
             _cancel_inflight_entry(_inflight.pop(key, None))
-        logger.warning(
-            f"[geocode] inflight_safety_prune dropped={drop_n} remaining={len(_inflight)}",
-        )
+
+    if len(_inflight) <= MAX_INFLIGHT_SIZE:
+        return
+
+    sorted_keys = sorted(_inflight, key=lambda k: _inflight[k]["ts"])
+    drop_n = max(1, len(sorted_keys) // 2)
+    for key in sorted_keys[:drop_n]:
+        _cancel_inflight_entry(_inflight.pop(key, None))
+    logger.warning(
+        f"[geocode] inflight_safety_prune dropped={drop_n} remaining={len(_inflight)}",
+    )
+
+
+def _inflight_safety_prune() -> None:
+    with _lock:
+        _inflight_safety_prune_locked()
 
 
 async def cleanup_stale_inflight(max_age_seconds: int = 600) -> int:
@@ -132,6 +138,27 @@ async def cleanup_stale_inflight(max_age_seconds: int = 600) -> int:
     if removed:
         logger.info(f"[geocode] stale_inflight_cleanup removed={removed}", flush=True)
     return removed
+
+
+def inflight_count() -> int:
+    with _lock:
+        return len(_inflight)
+
+
+async def cancel_all_inflight() -> int:
+    """Annuleer alle lopende PDOK-taken (na timeout of einde cycle)."""
+    global _backpressure_flush_task
+    if _backpressure_flush_task and not _backpressure_flush_task.done():
+        _backpressure_flush_task.cancel()
+        _backpressure_flush_task = None
+    with _lock:
+        entries = list(_inflight.values())
+        _inflight.clear()
+    for entry in entries:
+        _cancel_inflight_entry(entry)
+    if entries:
+        print(f"[geocode] cancel_all_inflight count={len(entries)}", flush=True)
+    return len(entries)
 
 
 def log_geocode_metrics() -> None:
@@ -271,10 +298,18 @@ async def _pdok_lookup(adres: str) -> dict | None:
     if _pdok_sem is None:
         _pdok_sem = asyncio.Semaphore(_PDOK_CONCURRENCY)
     async with _pdok_sem:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, headers={"User-Agent": _USER_AGENT}) as client:
-            r = await client.get(PDOK_URL, params={"q": adres, "rows": 1, "fq": "type:adres"})
-            r.raise_for_status()
-            docs = (r.json().get("response") or {}).get("docs") or []
+        try:
+            async with httpx.AsyncClient(
+                timeout=_HTTP_TIMEOUT, headers={"User-Agent": _USER_AGENT},
+            ) as client:
+                r = await client.get(
+                    PDOK_URL, params={"q": adres, "rows": 1, "fq": "type:adres"},
+                )
+                r.raise_for_status()
+                docs = (r.json().get("response") or {}).get("docs") or []
+        except (asyncio.TimeoutError, httpx.TimeoutException):
+            logger.warning(f"[geocode] PDOK timeout ({_HTTP_TIMEOUT}s) voor {adres!r}")
+            return None
     return _parse_doc(docs[0]) if docs else None
 
 
@@ -347,7 +382,7 @@ async def _resolve_uncached(adres: str, norm_key: str) -> dict | None:
         overflow = _store_in_memory(keys, adres, result)
 
     if overflow:
-        await _schedule_backpressure_flush()
+        await _schedule_backpressure_flush()  # retourneert direct; flush loopt op achtergrond
     return result
 
 
@@ -363,8 +398,25 @@ def _flush_pending_sync(reason: str) -> None:
         )
 
 
+async def _run_backpressure_flush() -> None:
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(_flush_pending_sync, "backpressure"),
+            timeout=_BACKPRESSURE_FLUSH_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        print(
+            f"[geocode] backpressure_flush_timeout sec={_BACKPRESSURE_FLUSH_TIMEOUT_SEC}",
+            flush=True,
+        )
+
+
 async def _schedule_backpressure_flush() -> None:
-    await asyncio.to_thread(_flush_pending_sync, "backpressure")
+    """Niet-blokkerend: coalesce parallelle flush-pogingen tot één achtergrondtaak."""
+    global _backpressure_flush_task
+    if _backpressure_flush_task and not _backpressure_flush_task.done():
+        return
+    _backpressure_flush_task = asyncio.create_task(_run_backpressure_flush())
 
 
 async def geocode(adres: str) -> dict | None:
@@ -395,7 +447,7 @@ async def geocode(adres: str) -> dict | None:
             _stats["coalesced"] += 1
             task = entry["task"]
         else:
-            _inflight_safety_prune()
+            _inflight_safety_prune_locked()
             task = asyncio.create_task(_resolve_uncached(adres, norm_key))
             _inflight[norm_key] = {"task": task, "ts": now}
 
@@ -403,36 +455,62 @@ async def geocode(adres: str) -> dict | None:
         return await task
     finally:
         with _lock:
-            _inflight.pop(norm_key, None)
+            if _inflight.get(norm_key, {}).get("task") is task:
+                _inflight.pop(norm_key, None)
+
+
+async def geocode_with_timeout(adres: str, timeout: float) -> dict | None:
+    """
+    geocode() met harde timeout; annuleert de onderliggende PDOK-task bij timeout.
+    """
+    norm_key, _ = _lookup_keys(adres)
+    call = asyncio.create_task(geocode(adres))
+    try:
+        return await asyncio.wait_for(call, timeout=timeout)
+    except asyncio.TimeoutError:
+        call.cancel()
+        try:
+            await call
+        except (asyncio.CancelledError, Exception):
+            pass
+        with _lock:
+            entry = _inflight.pop(norm_key, None)
+        _cancel_inflight_entry(entry)
+        return None
+
+
+_FLUSH_TIMEOUT_SEC = float(os.getenv("GEOCODE_FLUSH_TIMEOUT_SEC", "30"))
 
 
 async def flush_geocode_cache() -> None:
     """Flush retry-queue + pending naar Supabase (einde run of vóór nieuwe run)."""
     rows = await asyncio.to_thread(_take_flush_batch)
     if not rows:
-        logger.info(
-            "[geocode] cache_hit=%s pdok_calls=%s coalesced=%s buffered=0 flush=0 retry_pending=0",
-            _stats["memory_hit"],
-            _stats["pdok_calls"],
-            _stats["coalesced"],
+        print(
+            f"[geocode] flush_skip pending=0 "
+            f"cache_hit={_stats['memory_hit']} pdok_calls={_stats['pdok_calls']}",
             flush=True,
         )
         return
+    print(f"[geocode] flush_start rows={len(rows)}", flush=True)
 
-    ok, fail = await asyncio.to_thread(_flush_rows_sync, rows, reason="run_end")
+    try:
+        ok, fail = await asyncio.wait_for(
+            asyncio.to_thread(_flush_rows_sync, rows, reason="run_end"),
+            timeout=_FLUSH_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        print(
+            f"[geocode] flush_timeout sec={_FLUSH_TIMEOUT_SEC} rows={len(rows)}",
+            flush=True,
+        )
+        _requeue_failed(rows)
+        return
     _stats["flush_ok"] = ok
     _stats["flush_fail"] = fail
-    logger.info(
-        "[geocode] cache_hit=%s pdok_calls=%s coalesced=%s flush_ok=%s flush_fail=%s "
-        "retry_requeued=%s backpressure=%s periodic=%s retry_pending=%s",
-        _stats["memory_hit"],
-        _stats["pdok_calls"],
-        _stats["coalesced"],
-        ok,
-        fail,
-        _stats["retry_requeued"],
-        _stats["flush_backpressure"],
-        _stats["flush_periodic"],
-        await asyncio.to_thread(_pending_retry_len),
+    retry_pending = await asyncio.to_thread(_pending_retry_len)
+    print(
+        f"[geocode] flush_done ok={ok} fail={fail} retry_pending={retry_pending} "
+        f"pdok_calls={_stats['pdok_calls']}",
         flush=True,
     )

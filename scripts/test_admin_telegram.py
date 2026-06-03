@@ -44,12 +44,23 @@ async def main() -> int:
     await stuur_telegram(chat_id, "🧪 Huiszoeker test — idempotente notificatie-pipeline (admin)")
     print("OK: test Telegram verstuurd", flush=True)
 
-    print(f"Kandidaten: {len(get_listings_for_user(pref))}", flush=True)
+    sample = (
+        db.table("listings")
+        .select("url")
+        .eq("beschikbaar", True)
+        .limit(50)
+        .execute()
+        .data
+        or []
+    )
+    scrape_urls = {r["url"] for r in sample if r.get("url")}
+    print(f"Test-scope URLs: {len(scrape_urls)}", flush=True)
+    print(f"Kandidaten: {len(get_listings_for_user(pref, scrape_urls))}", flush=True)
 
-    n1 = await verwerk_notificaties([pref])
+    n1 = await verwerk_notificaties([pref], scrape_urls)
     print(f"Run 1: {n1} nieuwe Telegram(s)", flush=True)
 
-    n2 = await verwerk_notificaties([pref])
+    n2 = await verwerk_notificaties([pref], scrape_urls)
     print(f"Run 2: {n2} nieuwe (verwacht 0)", flush=True)
 
     return 0 if n2 == 0 else 2

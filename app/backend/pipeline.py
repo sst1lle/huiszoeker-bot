@@ -1,5 +1,6 @@
 """Scrape-orchestratie, geocoding glue en run_cycle."""
 import asyncio
+import contextlib
 import importlib
 import inspect
 import logging
@@ -19,10 +20,12 @@ from scheduler.scrape_scheduler import run_scraper
 from scrapers.base import BaseScraper
 from shared.cities import stad_voor_db
 from shared.geocoder import (
-    geocode,
     begin_geocode_run,
-    flush_geocode_cache,
+    cancel_all_inflight,
     cleanup_stale_inflight,
+    flush_geocode_cache,
+    geocode_with_timeout,
+    inflight_count,
     log_geocode_metrics,
 )
 from storage import ListingStorage
@@ -61,37 +64,125 @@ def load_scrapers() -> list:
     return gevonden
 
 
+_GEOCODE_REQUEST_TIMEOUT_SEC = float(os.getenv("GEOCODE_REQUEST_TIMEOUT_SEC", "5"))
+_GEOCODE_ENRICH_TIMEOUT_SEC = int(os.getenv("GEOCODE_ENRICH_TIMEOUT_SEC", "60"))
+_GEOCODE_ENRICH_WORKERS = int(os.getenv("GEOCODE_ENRICH_WORKERS", "8"))
+_FLUSH_TIMEOUT_SEC = float(os.getenv("GEOCODE_FLUSH_TIMEOUT_SEC", "30"))
+
+
+async def _flush_geocode_cache_timed(label: str) -> None:
+    try:
+        await asyncio.wait_for(flush_geocode_cache(), timeout=_FLUSH_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        print(f"[geocode] {label}_flush_timeout sec={_FLUSH_TIMEOUT_SEC}", flush=True)
+
+
 async def verrijk_met_geocoding(listings: list[dict]) -> None:
     """
     Vul postcode/wijk/buurt/lat/lng per listing via PDOK.
-    Cache: in-memory + batch flush (backpressure, periodic daemon, retry-queue).
+    Bounded workers + harde global timeout (asyncio.timeout) zodat de cycle niet blijft hangen.
     """
-    await flush_geocode_cache()  # retry WAL + resterende pending van vorige run
-    await cleanup_stale_inflight()
-    begin_geocode_run()
-    sem = asyncio.Semaphore(8)
+    met_adres = sum(1 for l in listings if (l.get("adres") or "").strip())
+    print(
+        f"[geocode] verrijk_start total={len(listings)} met_adres={met_adres} "
+        f"workers={_GEOCODE_ENRICH_WORKERS} "
+        f"timeout_per_request={_GEOCODE_REQUEST_TIMEOUT_SEC}s "
+        f"global_timeout={_GEOCODE_ENRICH_TIMEOUT_SEC}s",
+        flush=True,
+    )
+    t0 = time.monotonic()
+    verrijkt = 0
+    timed_out = False
 
-    async def _verrijk(lst: dict) -> None:
+    async def _verrijk_een(lst: dict) -> bool:
         adres = (lst.get("adres") or "").strip()
         if not adres:
-            return
+            return False
         stad = (lst.get("stad") or "").strip()
-        # Bevat het adres al een stad (bv. Kamernet "Straat, Delft")? Dan NIET de scraper-stad
-        # aanhangen — "Delft den-haag" verwart PDOK. Anders helpt de scraper-stad de match.
-        # GEEN gemeente-constraint: PDOK mag de echte stad teruggeven.
         query = adres if "," in adres else f"{adres} {stad}".strip()
-        async with sem:
-            geo = await geocode(query)
-        if geo:
-            for field in ("postcode", "wijk", "buurt", "lat", "lng"):
-                lst[field] = geo.get(field)
-            # PDOK-stad is de waarheid (niet de stad uit de scraper-URL)
-            c = stad_voor_db(geo.get("stad"))
-            if c:
-                lst["stad"] = c
+        geo = await geocode_with_timeout(query, _GEOCODE_REQUEST_TIMEOUT_SEC)
+        if not geo:
+            return False
+        for field in ("postcode", "wijk", "buurt", "lat", "lng"):
+            lst[field] = geo.get(field)
+        c = stad_voor_db(geo.get("stad"))
+        if c:
+            lst["stad"] = c
+        return True
 
-    await asyncio.gather(*(_verrijk(lst) for lst in listings))
-    await flush_geocode_cache()
+    async def _worker(worker_id: int, q: asyncio.Queue) -> int:
+        done = 0
+        while True:
+            try:
+                lst = q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if await _verrijk_een(lst):
+                done += 1
+            q.task_done()
+        return done
+
+    try:
+        async with asyncio.timeout(_GEOCODE_ENRICH_TIMEOUT_SEC):
+            print("[geocode] pre_flush", flush=True)
+            await _flush_geocode_cache_timed("pre")
+            await cleanup_stale_inflight()
+            begin_geocode_run()
+
+            q: asyncio.Queue = asyncio.Queue()
+            for lst in listings:
+                q.put_nowait(lst)
+
+            print(
+                f"[geocode] workers_start count={_GEOCODE_ENRICH_WORKERS} "
+                f"queue={q.qsize()}",
+                flush=True,
+            )
+
+            async def _progress() -> None:
+                while True:
+                    await asyncio.sleep(10)
+                    print(
+                        f"[geocode] progress elapsed={time.monotonic() - t0:.0f}s "
+                        f"queue={q.qsize()} inflight={inflight_count()}",
+                        flush=True,
+                    )
+
+            progress = asyncio.create_task(_progress())
+            try:
+                results = await asyncio.gather(
+                    *(_worker(i, q) for i in range(_GEOCODE_ENRICH_WORKERS)),
+                    return_exceptions=True,
+                )
+            finally:
+                progress.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress
+            for r in results:
+                if isinstance(r, int):
+                    verrijkt += r
+                elif isinstance(r, BaseException):
+                    print(f"[geocode] worker_error {type(r).__name__}: {r}", flush=True)
+
+            print(f"[geocode] workers_done verrijkt={verrijkt}", flush=True)
+            print("[geocode] post_flush", flush=True)
+            await _flush_geocode_cache_timed("post")
+    except TimeoutError:
+        timed_out = True
+        print(
+            f"[geocode] verrijk_global_timeout na {_GEOCODE_ENRICH_TIMEOUT_SEC}s "
+            f"(elapsed={time.monotonic() - t0:.1f}s verrijkt={verrijkt})",
+            flush=True,
+        )
+    finally:
+        await cancel_all_inflight()
+
+    if not timed_out:
+        print(
+            f"[geocode] verrijk_klaar elapsed={time.monotonic() - t0:.1f}s "
+            f"verrijkt={verrijkt}",
+            flush=True,
+        )
 
 
 def registreer_scrapers(scrapers: list) -> None:
@@ -395,7 +486,12 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
             flush=True,
         )
 
-        gestuurd = await verwerk_notificaties(prefs)
+        scrape_urls = {
+            (l.get("url") or "").strip()
+            for l in uniek
+            if (l.get("url") or "").strip()
+        }
+        gestuurd = await verwerk_notificaties(prefs, scrape_urls)
 
         print(
             f"[main] ✅ Loop klaar — "
