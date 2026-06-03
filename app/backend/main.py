@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import asyncio
 import importlib
@@ -15,6 +14,9 @@ from scrapers.base import BaseScraper
 from deduplicator import Deduplicator
 from storage import ListingStorage
 from shared.geocoder import geocode
+from shared.cities import normalize_city_name, stad_voor_db, stad_slugs_uit_pref
+from shared.wijken import stad_db_variants
+from scrape_plan import bouw_scrape_taken, taken_per_scraper
 from scheduler.scrape_scheduler import run_scraper
 
 os.environ['PYTHONUNBUFFERED'] = '1'
@@ -195,21 +197,27 @@ def upsert_listing(listing: dict) -> str | None:
         updates = {"laatst_gevalideerd": nu, "beschikbaar": scrape_beschikbaar}
         # Vul ontbrekende velden in — migratiestubs hebben prijs/stad/adres=None
         if not record.get("prijs"):
-            for field in ("adres", "stad", "prijs", "oppervlakte", "type_woning", "foto_url"):
+            for field in ("adres", "prijs", "oppervlakte", "type_woning", "foto_url"):
                 if listing.get(field) is not None:
                     updates[field] = listing[field]
+            if listing.get("stad") is not None:
+                updates["stad"] = stad_voor_db(listing["stad"]) or listing["stad"]
         # Geo-velden + stad verversen zodra deze listing dit run succesvol gegeocode is.
         # NB: street-level matches (bv. "Straat, Delft" zonder huisnummer) hebben géén postcode
         # maar wél stad/wijk/coördinaten → die willen we óók verwerken; daarom NIET op postcode gaten.
         if any(listing.get(f) is not None for f in ("wijk", "lat", "lng", "postcode")):
-            for field in ("postcode", "wijk", "buurt", "lat", "lng", "stad"):
+            for field in ("postcode", "wijk", "buurt", "lat", "lng"):
                 if listing.get(field) is not None:
                     updates[field] = listing[field]
+            if listing.get("stad") is not None:
+                updates["stad"] = stad_voor_db(listing["stad"]) or listing["stad"]
         db.table("listings").update(updates).eq("id", record["id"]).execute()
         return record["id"]
 
     nu = datetime.now(timezone.utc).isoformat()
     supabase_data = {k: v for k, v in listing.items() if k in _SUPABASE_LISTING_FIELDS}
+    if supabase_data.get("stad"):
+        supabase_data["stad"] = stad_voor_db(supabase_data["stad"]) or supabase_data["stad"]
     nieuw = {**supabase_data, "eerste_gezien": nu, "created_at": nu, "laatst_gevalideerd": nu}
     result = db.table("listings").insert(nieuw).execute()
     return result.data[0]["id"] if result.data else None
@@ -238,7 +246,7 @@ async def verrijk_met_geocoding(listings: list[dict]) -> None:
                 lst[field] = geo.get(field)
             # PDOK-stad is de waarheid (niet de stad uit de scraper-URL)
             if geo.get("stad"):
-                lst["stad"] = geo["stad"]
+                lst["stad"] = stad_voor_db(geo["stad"]) or geo["stad"]
 
     await asyncio.gather(*(_verrijk(lst) for lst in listings))
 
@@ -326,68 +334,36 @@ def get_enabled_scrapers(all_scrapers: list) -> list:
         return all_scrapers
 
 
-def bouw_combis(scrapers: list, prefs: list) -> dict:
+_SKIP_TYPE_CHECK = {"funda", "pararius"}
+_NOTIFICATIE_LIMIT = 1000
+
+
+def _stad_filter_values(pref: dict) -> list[str]:
     """
-    Bouw unieke parameter-combinaties per scraper op basis van gebruikersvoorkeuren.
-
-    Sleutel: {scraper.name}-{stad}-{min}-{max}-{types}-r{radius}
-    Als scraper.uses_types=False wordt het types-deel weggelaten — de scraper
-    retourneert toch altijd alle typen (bijv. Pararius).
-
-    Toevoegen van een nieuwe scraper vereist geen aanpassing hier.
+    Waarden voor listings.stad in SQL (.in_): genormaliseerde slug + legacy varianten
+    (PDOK/CBS-namen uit oudere records).
     """
-    combis = {}
-    for scraper in [s for s in scrapers if not getattr(s, "excluded_from_main_loop", False)]:
-        for pref in prefs:
-            stad_raw = (pref.get("stad") or "").strip()
-            if not stad_raw:
-                continue
-            # Eén voorkeur kan meerdere steden bevatten ("utrecht, amsterdam").
-            # Splits centraal in losse combis per stad — geen enkele scraper kan
-            # komma-gescheiden steden in één URL aan (Kamernet 404't, Funda/Pararius idem).
-            steden = [s.strip() for s in stad_raw.split(",") if s.strip()]
-            min_p = pref.get("min_prijs") or 0
-            max_p = pref.get("max_prijs") or 1500
-            types = pref.get("type_woning") or []
-            types_deel = "" if not scraper.uses_types else ",".join(sorted(types))
-
-            for stad in steden:
-                key = f"{scraper.name}-{stad}-{min_p}-{max_p}-{types_deel}"
-                if key not in combis:
-                    combis[key] = {
-                        "scraper": scraper,
-                        "stad": stad,
-                        "min_prijs": min_p,
-                        "max_prijs": max_p,
-                        "types": types,
-                    }
-    return combis
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in (pref.get("stad") or "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        slug = normalize_city_name(raw)
+        if slug and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+        for v in stad_db_variants(raw):
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
 
 
-# Bekende stadsnaam-aliassen (officiële CBS-naam ↔ volksnaam) → zelfde genormaliseerde slug
-_CITY_ALIASES = {
-    "s-gravenhage": "den-haag",   # PDOK woonplaatsnaam voor Den Haag
-}
-
-
-def normalize_city_name(name: str) -> str:
+def get_listings_for_user(pref: dict) -> list:
     """
-    Normaliseer een stadsnaam naar een vergelijkbare slug (case-insensitief, geslugified).
-    'Den Haag' / 'den-haag' / "'s-Gravenhage" / 's gravenhage' → allemaal 'den-haag'.
-    """
-    if not name:
-        return ""
-    s = name.strip().lower().replace("'", "")        # "'s-gravenhage" → "s-gravenhage"
-    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")      # spaties/leestekens → '-'
-    return _CITY_ALIASES.get(s, s)
-
-
-def zoek_nieuwe_voor_user(pref: dict) -> list:
-    """
-    Haal listings op die matchen met de voorkeur en nog niet verstuurd zijn.
-
-    Validatievolgorde: STAD-validatie (primair, op de ECHTE PDOK-stad) → type → WIJK.
-    De wijk-validatie draait nooit op listings buiten de gewenste stad(en).
+    Listings voor notificaties: primaire filter in SQL (stad, prijs, beschikbaar).
+    Python alleen voor ranking-light (volgorde uit SQL), wijk/type en al-verstuurd.
     """
     db = get_db()
     user_id = pref.get("user_id")
@@ -395,30 +371,35 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
     max_prijs = pref.get("max_prijs") or 9999
     types = pref.get("type_woning") or []
 
-    # Gewenste steden (genormaliseerd) — primaire filter
-    gewenste_steden = {normalize_city_name(s) for s in (pref.get("stad") or "").split(",") if s.strip()}
+    steden_values = _stad_filter_values(pref)
+    if not steden_values:
+        return []
+
     gewenste_wijken = pref.get("gewenste_wijken") or []
     wijk_filter = {w.strip().lower() for w in gewenste_wijken if w and w.strip()}
-    if not wijk_filter:
-        print(f"[notificaties] Geen wijk filter: alle wijken voor {user_id}", flush=True)
 
-    # Al-verstuurde listing IDs voor deze user
     sent = db.table("sent_notifications").select("listing_id").eq("user_id", user_id).execute()
     al_gestuurd = {row["listing_id"] for row in (sent.data or [])}
 
-    # NB: geen .eq("stad", …) meer — stad-validatie gebeurt in Python op de echte PDOK-stad,
-    # genormaliseerd (de opgeslagen stad kan 's-Gravenhage/Delft/… zijn).
-    listings = (db.table("listings")
-                .select("*")
-                .eq("beschikbaar", True)
-                .gte("prijs", min_prijs)
-                .lte("prijs", max_prijs)
-                .limit(10000)
-                .execute()
-                .data or [])
+    listings = (
+        db.table("listings")
+        .select("*")
+        .in_("stad", steden_values)
+        .eq("beschikbaar", True)
+        .gte("prijs", min_prijs)
+        .lte("prijs", max_prijs)
+        .order("created_at", desc=True)
+        .limit(_NOTIFICATIE_LIMIT)
+        .execute()
+        .data
+        or []
+    )
 
-    # Bronnen waarbij type_woning niet betrouwbaar is → altijd tonen
-    _SKIP_TYPE_CHECK = {"funda", "pararius"}
+    steden_log = ",".join(stad_slugs_uit_pref(pref.get("stad") or ""))
+    print(
+        f"[notificaties] Filtered listings via SQL: stad={steden_log} count={len(listings)}",
+        flush=True,
+    )
 
     nieuw = []
     for listing in listings:
@@ -427,31 +408,24 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
         if "parkeergelegenheid" in (listing.get("url") or ""):
             continue
 
-        # 1. STAD-VALIDATIE (primair) — op de echte PDOK-stad
-        listing_stad = normalize_city_name(listing.get("stad") or "")
-        print(f"[validatie] Geocode stad={listing_stad or '?'} bron=PDOK", flush=True)
-        if gewenste_steden and listing_stad not in gewenste_steden:
-            print(f"[validatie] Stad mismatch: listing={listing_stad or '?'} user={','.join(sorted(gewenste_steden))}", flush=True)
-            continue
-        print(f"[validatie] Stad OK: {listing_stad}", flush=True)
-
-        # 2. type-check (alleen bronnen met betrouwbaar type)
         source = listing.get("source", "")
         if source not in _SKIP_TYPE_CHECK:
             listing_type = listing.get("type_woning")
             if listing_type and types and listing_type not in types:
                 continue
 
-        # 3. WIJK-VALIDATIE — draait NOOIT op listings buiten de gewenste stad (zie hierboven).
-        #    Leeg wijk_filter = geen filter → alle wijken binnen de stad (veilige fallback).
         if wijk_filter:
             listing_wijk = (listing.get("wijk") or "").strip().lower()
             if listing_wijk not in wijk_filter:
-                print(f"[validatie] Wijk mismatch: {listing_wijk or '?'} != {','.join(sorted(wijk_filter))}", flush=True)
                 continue
-            print(f"[notificaties] Wijk match: {listing.get('wijk')} in gewenste wijken van {user_id}", flush=True)
 
         nieuw.append(listing)
+
+    if nieuw:
+        print(
+            f"[notificaties] Matches for user={user_id}: count={len(nieuw)}",
+            flush=True,
+        )
 
     return nieuw
 
@@ -490,7 +464,7 @@ async def verwerk_notificaties(prefs: list) -> int:
         if not chat_id or not user_id:
             continue
 
-        nieuwe_listings = zoek_nieuwe_voor_user(pref)
+        nieuwe_listings = get_listings_for_user(pref)
 
         for listing in nieuwe_listings:
             await stuur_telegram(chat_id, maak_bericht(listing))
@@ -647,28 +621,37 @@ if __name__ == '__main__':
                 print("[main] Alle scrapers uitgeschakeld — notificaties worden nog wel verwerkt.", flush=True)
 
             BaseScraper.clear_cache()
-            combis = bouw_combis(scrapers, prefs)
+            scrape_taken = bouw_scrape_taken(scrapers, prefs)
+            taken_by_scraper = taken_per_scraper(scrape_taken)
             enabled_names = {s.name for s in scrapers}
 
-            # Combis groeperen per scraper (één scheduler-beslissing per scraper, niet per combi)
-            combis_per_scraper: dict = {}
-            for params in combis.values():
-                combis_per_scraper.setdefault(params["scraper"].name, []).append(params)
+            if scrape_taken:
+                unieke_steden = sorted({t["stad"] for t in scrape_taken})
+                print(
+                    f"[scrape] Plan: {len(scrape_taken)} taken "
+                    f"({len(taken_by_scraper)} scrapers, steden={','.join(unieke_steden)})",
+                    flush=True,
+                )
 
             alle_woningen = []
             counts_per_scraper: dict = {}
 
-            # ── REALTIME scrapers — elk via de scheduler-gateway (15-min venster + lock) ──
+            # ── REALTIME scrapers — 1× per (site, stad), scheduler-lock per site ──
             for scraper in scrapers:
                 if getattr(scraper, "excluded_from_main_loop", False):
                     continue
-                params_list = combis_per_scraper.get(scraper.name, [])
+                params_list = taken_by_scraper.get(scraper.name, [])
                 if not params_list:
                     continue
 
                 def _run_realtime(sc=scraper, pl=params_list):
                     out = []
                     for p in pl:
+                        print(
+                            f"[scrape] {sc.name} stad={p['stad']} "
+                            f"prijs={p['min_prijs']}-{p['max_prijs']}",
+                            flush=True,
+                        )
                         out += sc._scrape_impl(
                             stad=p["stad"], min_prijs=p["min_prijs"],
                             max_prijs=p["max_prijs"], types=p["types"],

@@ -60,7 +60,7 @@ class ParariusScraper(BaseScraper):
     uses_types = False  # URL heeft geen type-segment
 ```
 
-`bouw_combis()` gebruikt dit attribuut om de dedup-sleutel te bouwen: voor `uses_types=False` scrapers worden geen aparte combinaties per type-set aangemaakt. Dit voorkomt onnodige dubbele scrape-runs.
+`scrape_plan.bouw_scrape_taken()` gebruikt dit attribuut: voor `uses_types=False` scrapers wordt één taak per (site, stad) gescraped; voor Kamernet worden types geünioneerd over alle users die die stad zoeken. Geen per-user scrape-combinaties meer.
 
 ### 4. Scraper-configuratie in Supabase (`scraper_config`)
 

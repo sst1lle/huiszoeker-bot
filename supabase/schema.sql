@@ -135,8 +135,10 @@ CREATE INDEX idx_nieuwbouw_status    ON nieuwbouw_projects(status);
 
 -- Index voor snelle lookups
 CREATE INDEX idx_listings_stad ON listings(stad);
+CREATE INDEX idx_listings_price ON listings(prijs);
 CREATE INDEX idx_listings_beschikbaar ON listings(beschikbaar);
 CREATE INDEX idx_listings_bron ON listings(source);
+CREATE INDEX idx_listings_filter ON listings (stad, prijs, beschikbaar);
 CREATE INDEX idx_user_prefs_user ON user_preferences(user_id);
 
 -- ============================================================

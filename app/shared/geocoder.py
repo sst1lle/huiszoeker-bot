@@ -150,7 +150,7 @@ async def geocode(adres: str) -> dict | None:
 
     Geen geforceerde gemeente-constraint: PDOK mag de werkelijke stad teruggeven. Dit is
     cruciaal omdat scrapers (m.n. Kamernet) ook listings uit omliggende steden teruggeven —
-    die moeten hun eigen stad/wijk krijgen, zodat de stad-validatie ze correct uitsluit.
+    die moeten hun eigen stad/wijk krijgen (opgeslagen als genormaliseerde slug), zodat SQL-stadfilters ze correct uitsluiten.
 
     Geeft een dict terug met straat, huisnummer, postcode, wijk, buurt, stad, lat, lng,
     of None als PDOK niets vindt of bij een (tijdelijke) fout.
