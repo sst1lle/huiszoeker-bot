@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from bs4 import BeautifulSoup
 
+from shared.cities import canonical_city
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ class FundaScraper(BaseScraper):
         max_prijs: int,
         types: list[str],
     ) -> list[dict]:
-        stad_slug = stad.lower().replace(" ", "-")
+        stad_slug = canonical_city(stad)
         base = (
             f"{BASE_URL}/zoeken/huur"
             f"?selected_area=%5B%22{stad_slug}%22%5D"

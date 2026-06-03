@@ -6,9 +6,19 @@ import requests
 from abc import ABC, abstractmethod
 from queue import Queue
 
+from .byparr_traffic import (
+    ByparrError,
+    effective_max_pages,
+    is_route_blocked,
+    is_scraper_degraded,
+    route_key,
+    submit as byparr_submit,
+)
+
 logger = logging.getLogger(__name__)
 
-_FLARESOLVERR_URL = "http://byparr:8191/v1"
+# Minimaal % pagina's dat moet slagen om niet als "completeness=0" te gelden
+_PARTIAL_SCRAPE_MIN_RATIO = float(os.getenv("PARTIAL_SCRAPE_MIN_RATIO", "0.34"))
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 MAX_PAGES = int(os.getenv("MAX_PAGES", "3"))  # max pagina's per scraper (Funda/Pararius/Kamernet); configureerbaar via .env
 
@@ -112,21 +122,11 @@ class BaseScraper(ABC):
         if not cls.allow_flaresolverr:
             raise RuntimeError("Direct gefaald na 3 pogingen en Byparr-fallback uitgeschakeld voor deze scraper")
 
-        # Stap 3: Byparr
+        # Stap 3: Byparr (resilience layer: validate, retry, inflight limit)
         try:
-            r = requests.post(_FLARESOLVERR_URL, json={
-                "cmd": "request.get",
-                "url": url,
-                "maxTimeout": 60000,
-            }, timeout=70)
-            data = r.json()
-            if data.get("status") != "ok":
-                raise RuntimeError(f"Byparr fout: {data.get('message')}")
-            html = data["solution"]["response"]
-        except RuntimeError:
-            raise
-        except Exception as e:
-            raise RuntimeError(f"Byparr verbindingsfout: {e}") from e
+            html = byparr_submit(url, scraper=cls.name)
+        except ByparrError as e:
+            raise RuntimeError(f"Byparr {e.kind.value}: {e}") from e
 
         with cls._cache_lock:
             BaseScraper._stats["flare"] += 1
@@ -173,24 +173,47 @@ class BaseScraper(ABC):
         - seen_this_run         → gedeelde set om over meerdere aanroepen heen te ontdubbelen
                                   (bijv. Kamernet dat per woningtype pagineert)
 
-        Stopt zodra een pagina geen enkele nieuwe url oplevert (niet in DB én niet
-        al deze run gezien) of leeg is, of bij een ophaalfout. Geeft de gecombineerde,
-        binnen-run ontdubbelde lijst terug (zowel nieuwe als reeds bekende listings).
+        Bij fetch-fout: retry via Byparr-wrapper, daarna volgende pagina (geen break).
+        Stopt bij lege parse of geen nieuwe url's (early-stop). Logt completeness score.
         """
         source = source or self.name
         known = self.known_urls(source)
         if seen_this_run is None:
             seen_this_run = set()
         results: list[dict] = []
+        pages_ok = 0
+        pages_failed: list[int] = []
+        max_pages = effective_max_pages(self.name, MAX_PAGES)
+        if max_pages < MAX_PAGES:
+            logger.warning(
+                f"[{self.name}] Byparr degraded — max_pages={max_pages} (was {MAX_PAGES})",
+            )
 
-        for page in range(1, MAX_PAGES + 1):
+        for page in range(1, max_pages + 1):
             url = page_url_fn(page)
+            if getattr(self, "flaresolverr_only", False):
+                if is_scraper_degraded(self.name):
+                    pages_failed.append(page)
+                    logger.warning(f"[{self.name}] pagina {page} skipped: scraper degraded (preflight)")
+                    continue
+                if is_route_blocked(self.name, url):
+                    pages_failed.append(page)
+                    logger.warning(
+                        f"[{self.name}] pagina {page} skipped: route blocked ({route_key(self.name, url)})",
+                    )
+                    continue
             try:
-                html = self.flare_get(url)
+                html = type(self).flare_get(url)
+                if self.request_delay_seconds > 0:
+                    time.sleep(self.request_delay_seconds)
             except RuntimeError as e:
-                logger.warning(f"[{self.name}] pagina {page} overgeslagen: {e}")
-                break
+                pages_failed.append(page)
+                logger.warning(
+                    f"[{self.name}] pagina {page} fetch mislukt — volgende pagina: {e}",
+                )
+                continue
 
+            pages_ok += 1
             listings = parse_html_fn(html)
             if not listings:
                 logger.info(f"[{self.name}] pagina {page}: geen listings, stoppen")
@@ -210,6 +233,32 @@ class BaseScraper(ABC):
             if nieuw == 0:
                 logger.info(f"[{self.name}] pagina {page}: geen nieuwe listings — vroege stop")
                 break
+
+        fetch_attempted = pages_ok + len(pages_failed)
+        completeness = pages_ok / fetch_attempted if fetch_attempted else 0.0
+        if pages_failed:
+            level = logging.ERROR if pages_ok == 0 else logging.WARNING
+            logger.log(
+                level,
+                f"[{self.name}] partial scrape: pages_ok={pages_ok} "
+                f"fetch_failed={pages_failed} completeness={completeness:.0%} "
+                f"listings={len(results)}",
+            )
+        elif pages_ok > 0:
+            logger.info(
+                f"[{self.name}] scrape completeness={completeness:.0%} "
+                f"pages_ok={pages_ok} listings={len(results)}",
+            )
+
+        if pages_ok == 0 and pages_failed:
+            logger.error(
+                f"[{self.name}] completeness=0% — geen pagina gelukt; "
+                f"controleer Byparr ([byparr] logs hierboven)",
+            )
+        elif completeness < _PARTIAL_SCRAPE_MIN_RATIO and pages_failed:
+            logger.warning(
+                f"[{self.name}] lage completeness ({completeness:.0%}) — data mogelijk incompleet",
+            )
 
         return results
 

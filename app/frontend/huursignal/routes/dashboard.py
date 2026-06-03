@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Blueprint, session, redirect, url_for, request, render_template
 
 from db import get_db
-from shared.wijken import stad_db_variants
+from shared.cities import stad_ilike_zoekterm, stad_slugs_uit_pref
 from ..decorators import login_required
 
 dash_bp = Blueprint("dash", __name__)
@@ -20,43 +20,59 @@ LEEFTIJD_OPTIES = [
 _HIDDEN_STATUSES = {"sold_out", "rented_out", "under_option", "registration_closed"}
 
 
-def _query_nieuwbouw(db, stad: str) -> list[dict]:
+def _query_nieuwbouw(db, stad_raw: str) -> list[dict]:
     """
-    Zoek actieve nieuwbouwprojecten op stad.
+    Zoek actieve nieuwbouwprojecten op canonical stad-slugs uit voorkeur.
     Verbergt projecten met uitverkochte/verhuurd/optie/gesloten status.
     """
-    stad_search = stad.replace("-", " ").strip()
+    slugs = stad_slugs_uit_pref(stad_raw)
+    if not slugs:
+        return []
 
-    projecten = (
-        db.table("nieuwbouw_projects")
-          .select("*")
-          .ilike("city", f"%{stad_search}%")
-          .eq("is_active", True)
-          .order("scraped_at", desc=True)
-          .execute()
-          .data or []
-    )
+    seen_ids: set[str] = set()
+    projecten: list[dict] = []
 
-    # Filter verborgen statussen in Python (is_active vangt lifecycle op, status vangt beschikbaarheid)
+    for slug in slugs:
+        stad_search = stad_ilike_zoekterm(slug)
+        rows = (
+            db.table("nieuwbouw_projects")
+            .select("*")
+            .ilike("city", f"%{stad_search}%")
+            .eq("is_active", True)
+            .order("scraped_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
+        for p in rows:
+            pid = p.get("id")
+            if pid and pid in seen_ids:
+                continue
+            if pid:
+                seen_ids.add(pid)
+            projecten.append(p)
+
     zichtbaar = [p for p in projecten if p.get("status") not in _HIDDEN_STATUSES]
     verborgen = len(projecten) - len(zichtbaar)
 
     logger.info(
-        f"[dashboard] nieuwbouw query stad='{stad}' → zoekterm='{stad_search}' → "
-        f"{len(projecten)} actief, {verborgen} verborgen op status → {len(zichtbaar)} getoond"
+        f"[dashboard] nieuwbouw slugs={','.join(slugs)} → "
+        f"{len(projecten)} actief, {verborgen} verborgen op status → {len(zichtbaar)} getoond",
+        flush=True,
     )
 
     if not projecten:
         sample = (
             db.table("nieuwbouw_projects")
-              .select("city, source, is_active")
-              .limit(10)
-              .execute()
-              .data or []
+            .select("city, source, is_active")
+            .limit(10)
+            .execute()
+            .data or []
         )
         logger.warning(
-            f"[dashboard] 0 nieuwbouw resultaten voor '{stad_search}'. "
-            f"Steden in DB (steekproef): {[r.get('city') for r in sample]}"
+            f"[dashboard] 0 nieuwbouw voor slugs={slugs}. "
+            f"Steden in DB (steekproef): {[r.get('city') for r in sample]}",
+            flush=True,
         )
 
     for p in zichtbaar:
@@ -89,24 +105,26 @@ def dashboard():
     types     = pref.get("type_woning") or []
 
     # ── Huurwoningen ──────────────────────────────────────────────────────────
-    # Match op de echte (PDOK-)stad: slug + officiële gemeentenaam (bv. den-haag + 's-Gravenhage),
-    # zodat listings uit omliggende steden (Delft/Rotterdam) niet meegenomen worden.
-    query = (db.table("listings")
-               .select("*", count="exact")
-               .in_("stad", stad_db_variants(stad))
-               .eq("beschikbaar", True)
-               .gte("prijs", min_prijs)
-               .lte("prijs", max_prijs)
-               .order("eerste_gezien", desc=True)
-               .range(offset, offset + per_page - 1))
+    steden = stad_slugs_uit_pref(stad)
+    if not steden:
+        raw, totaal = [], 0
+    else:
+        query = (db.table("listings")
+                   .select("*", count="exact")
+                   .in_("stad", steden)
+                   .eq("beschikbaar", True)
+                   .gte("prijs", min_prijs)
+                   .lte("prijs", max_prijs)
+                   .order("eerste_gezien", desc=True)
+                   .range(offset, offset + per_page - 1))
 
-    if leeftijd in ("1", "3", "7"):
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(leeftijd))).isoformat()
-        query = query.gte("eerste_gezien", cutoff)
+        if leeftijd in ("1", "3", "7"):
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=int(leeftijd))).isoformat()
+            query = query.gte("eerste_gezien", cutoff)
 
-    result   = query.execute()
-    raw      = result.data or []
-    totaal   = result.count or 0
+        result   = query.execute()
+        raw      = result.data or []
+        totaal   = result.count or 0
     listings = [l for l in raw
                 if not (l.get("type_woning") and types and l["type_woning"] not in types)]
 

@@ -1,11 +1,13 @@
 services:
   byparr:
-    image: ghcr.io/thephaseless/byparr:latest
+    build: ./docker/byparr
+    image: huiszoeker-byparr:patched
     container_name: byparr
     restart: unless-stopped
     init: true
     environment:
       - LOG_LEVEL=info
+      - BYPARR_POST_DOM_WAIT_SEC=2.5
     shm_size: 512m
     deploy:
       resources:

@@ -8,6 +8,7 @@ from db import get_db
 from crypto import encrypt, safe_decrypt
 from ..decorators import login_required
 from ..helpers import WONING_TYPES, get_bot_username
+from shared.cities import stad_pref_opslaan, stad_slugs_uit_pref
 from shared.wijken import wijken_voor_stad
 
 pref_bp = Blueprint("pref", __name__)
@@ -22,9 +23,8 @@ def _decrypt_pref(pref: dict) -> dict:
 
 
 def _wijken_per_stad(stad_str: str) -> dict:
-    """Beschikbare wijken per (komma-gescheiden) stad voor de selector."""
-    steden = [s.strip() for s in (stad_str or "").split(",") if s.strip()]
-    return {s: wijken_voor_stad(s) for s in steden}
+    """Beschikbare wijken per canonical stad-slug voor de selector."""
+    return {slug: wijken_voor_stad(slug) for slug in stad_slugs_uit_pref(stad_str)}
 
 
 @pref_bp.route("/onboarding")
@@ -60,7 +60,7 @@ def api_preferences():
         # PRIVACY-FIX: encrypt naam and telegram_chat_id before storing in database
         "naam":             encrypt(data.get("naam")),
         "telegram_chat_id": encrypt(data.get("telegram_chat_id")),
-        "stad":             data.get("stad"),
+        "stad":             stad_pref_opslaan(data.get("stad") or ""),
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),

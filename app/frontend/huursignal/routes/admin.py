@@ -6,6 +6,7 @@ from db import get_db
 from crypto import safe_decrypt
 from ..decorators import admin_required
 from ..helpers import WONING_TYPES
+from shared.cities import stad_pref_opslaan, stad_slugs_uit_pref
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -53,7 +54,7 @@ def api_admin_user_put(user_id):
         "user_id":          user_id,
         "naam":             data.get("naam"),
         "telegram_chat_id": data.get("telegram_chat_id"),
-        "stad":             data.get("stad") or "",
+        "stad":             stad_pref_opslaan(data.get("stad") or ""),
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),
@@ -162,7 +163,7 @@ def api_admin_test_scraper(name):
     if not pref_rows:
         return jsonify({"ok": False, "error": "Geen admin-profiel ingesteld."}), 400
     pref = pref_rows[0]
-    steden = [s.strip() for s in (pref.get("stad") or "").split(",") if s.strip()]
+    steden = stad_slugs_uit_pref(pref.get("stad") or "")
     if not steden:
         return jsonify({"ok": False, "error": "Profiel heeft geen stad ingesteld."}), 400
     min_p = pref.get("min_prijs") or 0

@@ -7,10 +7,10 @@ Huursignal is a Dutch rental housing notification system. It scrapes rental site
 - Scrapes Funda, Pararius, and Kamernet for rental listings.
 - Scrapes realtime rental sites every 7 minutes; nieuwbouw scrapers run weekly.
 - Runs each realtime scraper once per `(site, stad)` instead of once per user/profile.
-- Uses Supabase as the central filter layer for city, price, availability, sent-notification state, geo fields, and scheduler state.
-- Sends Telegram notifications for new matches and records them in `sent_notifications`.
+- Uses Supabase as the central filter layer for city, price, availability, geo fields, and scheduler state.
+- Sends Telegram notifications only after a successful DB claim in `sent_notifications` (idempotent, no duplicate sends after deploy/restart).
 - Supports per-user city, price, woningtype, Telegram, and desired-wijk preferences.
-- Geocodes listings via PDOK and stores `stad`, `postcode`, `wijk`, `buurt`, `lat`, and `lng`.
+- Geocodes listings via PDOK and stores canonical `stad`, `postcode`, `wijk`, `buurt`, `lat`, and `lng`.
 - Filters parking/garage listings out of user notifications.
 - Provides a Flask dashboard for listings, preferences, admin scraper toggles, and motivation letters.
 - Uses Byparr for Cloudflare-protected sites (Funda and Pararius).
@@ -20,24 +20,30 @@ Huursignal is a Dutch rental housing notification system. It scrapes rental site
 
 Three Docker services are defined in `docker-compose.yml`:
 
-- `huiszoeker` — backend bot loop (`app/backend/main.py`)
+- `huiszoeker` — backend bot (`app/backend/main.py` → `pipeline.scheduler_loop`)
 - `huiszoeker-web` — Flask web interface (`app/frontend/web.py`) served by Gunicorn
-- `byparr` — browser-based Cloudflare bypass service used by protected scrapers
+- `byparr` — browser-based Cloudflare bypass (patched image in `docker/byparr/`)
 
-### Backend Flow
+### Backend modules
 
-The bot loop runs every 7 minutes:
+| Module | Role |
+|--------|------|
+| `main.py` | Entrypoint: load scrapers, start async daemon loop |
+| `pipeline.py` | `run_cycle`: validate → scrape → geocode → upsert → notify |
+| `validation.py` | Stale listing HTTP checks, `scraper_config` schema checks |
+| `listings_db.py` | Bulk upsert on `url`, SQL candidate queries for notifications |
+| `notifications.py` | Telegram send + DB claim (`claim_sent_notification`) |
+| `scrape_plan.py` | One scrape task per `(scraper, canonical stad)` |
+| `scheduler/` | Supabase-backed run schedule and TTL locks |
 
-1. Validate stale listings (`404` marks `beschikbaar=false`).
-2. Load active user preferences.
-3. Build a scrape plan from all user cities:
-   - one task per `(scraper, stad)`
-   - no per-user scrape loops
-   - no per-profile duplicate scrapes
-4. Run realtime scrapers through the scheduler gate and TTL locks.
-5. Deduplicate, geocode, save a Parquet snapshot, and upsert listings by unique `url`.
-6. Query listings per user using SQL filters.
-7. Apply only lightweight Python checks (sent state, parking markers, wijk/type checks) and send Telegram notifications.
+### Backend flow
+
+The bot runs one persistent asyncio loop (7-minute interval):
+
+1. **Validate** stale listings in parallel (`404` → `beschikbaar=false`), batch upsert by `id`.
+2. **Scrape** via scheduler: build plan from all user cities (canonical slugs), run realtime scrapers with TTL locks.
+3. **Deduplicate**, **geocode** (PDOK, in-memory cache + batch flush), **Parquet snapshot**, **bulk upsert** listings (`on_conflict=url`, batches of 200).
+4. **Notify**: for each user, load SQL-filtered candidates, **claim** each `(user_id, listing_id)` in the DB, send Telegram only when the claim insert succeeds.
 
 Example scrape plan:
 
@@ -49,21 +55,38 @@ kamernet + utrecht
 ...
 ```
 
-### Notification Filtering
+### City normalization
 
-User notification queries are SQL-first:
+All `listings.stad` values and SQL filters use **canonical slugs** from `app/shared/cities.py` (e.g. `'s-Gravenhage` → `den-haag`). User preferences are normalized on save (`stad_pref_opslaan`). Nieuwbouw uses `stad_nieuwbouw_city()` for free-text `city` columns.
+
+Migration `012_listings_stad_canonical.sql` backfills legacy `listings.stad` values.
+
+### Notification filtering
+
+**SQL-first** candidate selection (`listings_db.get_listings_for_user`):
 
 ```sql
 SELECT *
 FROM listings
-WHERE stad = ANY(:user_steden)
+WHERE stad IN (:canonical_slugs)
   AND prijs BETWEEN :min_prijs AND :max_prijs
   AND beschikbaar = true
 ORDER BY created_at DESC
 LIMIT 1000;
 ```
 
-The implementation uses Supabase/PostgREST filters (`.in_`, `.gte`, `.lte`, `.eq`) in `get_listings_for_user()`.
+Python only applies parking markers, woningtype (except Funda/Pararius), and wijk filters.
+
+**Dedupe is DB-only** — no reads from `sent_notifications` for filtering:
+
+```sql
+INSERT INTO sent_notifications (user_id, listing_id)
+VALUES (...)
+ON CONFLICT (user_id, listing_id) DO NOTHING
+RETURNING id;
+```
+
+Implemented via RPC `claim_sent_notification` / `claim_sent_notifications_batch` (migration `013`). If the insert returns a row → send Telegram; otherwise log `status=duplicate` and skip.
 
 ### Scheduler
 
@@ -83,6 +106,10 @@ Nieuwbouw scrapers:
 - interval: weekly
 - anchor: Monday 05:00 Europe/Amsterdam
 - lock TTL: 6 hours
+
+### Byparr traffic
+
+Protected scrapers use `byparr_traffic.submit()` (queue, rate limits, circuit breaker) → `byparr_client.fetch()` (health, retries). Busy Byparr is not treated as offline.
 
 ## Scrapers
 
@@ -113,26 +140,24 @@ The canonical schema is in `supabase/schema.sql`; incremental changes are in `su
 Core tables:
 
 - `user_preferences` — per-user criteria and encrypted personal/Telegram fields
-- `listings` — canonical rental listings, unique by `url`
-- `sent_notifications` — one row per sent user/listing notification
+- `listings` — canonical rental listings, unique by `url`; `stad` is a canonical slug
+- `sent_notifications` — `UNIQUE(user_id, listing_id)`; source of truth for sent state
 - `scraper_config` — enable/disable state and scraper metadata
 - `scrape_runs` / `scrape_locks` — scheduler state
 - `geocode_cache` — PDOK geocoding cache
 - `wijken_cache` — cached CBS/PDOK wijk data
 - `nieuwbouw_projects` — tracked new-build projects
 
-Useful listing indexes:
+Recent migrations:
 
-- `idx_listings_stad`
-- `idx_listings_price`
-- `idx_listings_active`
-- `idx_listings_filter (stad, prijs, beschikbaar)`
-- `idx_listings_wijk`
+- `011_listings_query_indexes.sql` — listing query indexes
+- `012_listings_stad_canonical.sql` — backfill legacy `stad` to canonical slugs
+- `013_claim_sent_notification.sql` — idempotent notification RPCs
 
-Apply migrations manually in the Supabase SQL Editor, or use:
+Apply migrations in the Supabase SQL Editor, or use:
 
 ```bash
-./scripts/run_supabase_migration.sh supabase/migrations/011_listings_query_indexes.sql
+./scripts/run_supabase_migration.sh supabase/migrations/013_claim_sent_notification.sql
 ```
 
 That script requires `SUPABASE_DB_PASSWORD` in `.env`.
@@ -154,6 +179,16 @@ ENCRYPTION_KEY=          # Fernet key for encrypted PII fields
 GROQ_API_KEY=            # Required for motivation letter generation
 MAX_PAGES=3              # Max pages per realtime scraper
 SITE_URL=                # Public web URL if needed
+```
+
+Optional Byparr tuning (see `docker-compose.yml` / `byparr_client.py`):
+
+```env
+BYPARR_MAX_INFLIGHT=1
+BYPARR_MIN_GAP_SEC=3
+BYPARR_MAX_TIMEOUT_SEC=25
+BYPARR_READ_TIMEOUT=50
+BYPARR_REQUEST_RETRIES=2
 ```
 
 ## Run
@@ -183,15 +218,26 @@ docker logs -f byparr
 docker logs -f huiszoeker-web
 ```
 
+Test admin Telegram + idempotent notifications (sends one test message):
+
+```bash
+docker cp scripts/test_admin_telegram.py huiszoeker:/app/scripts/
+docker exec huiszoeker python3 /app/scripts/test_admin_telegram.py
+```
+
 ## Project Structure
 
 ```text
 app/
   backend/
-    main.py                  # bot loop: scrape, geocode, upsert, notify
+    main.py                  # bot entrypoint
+    pipeline.py              # run_cycle, scrape orchestration, geocoding glue
+    validation.py            # listing validation, schema checks
+    listings_db.py           # bulk upsert, notification candidate queries
+    notifications.py         # Telegram + DB claim dedupe
     scrape_plan.py           # one scrape task per site/city
     scheduler/               # Supabase-backed run schedule and TTL locks
-    scrapers/                # Funda, Pararius, Kamernet, nieuwbouw scrapers
+    scrapers/                # Funda, Pararius, Kamernet, nieuwbouw, Byparr client
     deduplicator.py
     storage.py               # Parquet snapshots
   frontend/
@@ -201,15 +247,18 @@ app/
       templates/
       static/
   shared/
-    cities.py                # city normalization
+    cities.py                # canonical city slugs (single source of truth)
     geocoder.py              # PDOK geocoding + cache
     wijken.py                # CBS/PDOK wijk lookup + cache
   db.py                      # shared Supabase client
 supabase/
   schema.sql
   migrations/
+docker/
+  byparr/                   # patched Byparr image (no networkidle wait)
 scripts/
   run_supabase_migration.sh
+  test_admin_telegram.py
   migrate_json_to_parquet.py
   migrate_json_to_supabase.py
 data/

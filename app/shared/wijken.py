@@ -14,6 +14,7 @@ import logging
 import requests
 
 from db import get_db
+from shared.cities import canonical_city, stad_ilike_zoekterm
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ _NEGEER = {"Groot water", "Buitenland", "", None}
 
 def _gemeentenaam(stad_slug: str) -> str | None:
     """Vertaal stad-slug naar officiële CBS-gemeentenaam via PDOK Locatieserver."""
-    q = stad_slug.replace("-", " ").strip()
+    q = stad_ilike_zoekterm(stad_slug) or stad_slug.replace("-", " ").strip()
     if not q:
         return None
     r = requests.get(
@@ -46,7 +47,7 @@ def gemeentenaam_voor_stad(stad_slug: str) -> str | None:
     Gebruikt de gecachete waarde uit wijken_cache indien aanwezig, anders PDOK Locatieserver.
     Bij een fout → None (geocoding valt dan terug op zoeken zonder gemeente-constraint).
     """
-    stad_slug = (stad_slug or "").strip().lower()
+    stad_slug = canonical_city(stad_slug)
     if not stad_slug:
         return None
     try:
@@ -60,24 +61,6 @@ def gemeentenaam_voor_stad(stad_slug: str) -> str | None:
     except Exception as e:
         logger.warning(f"[wijken] gemeentenaam-resolutie mislukt voor '{stad_slug}': {e}")
         return None
-
-
-def stad_db_variants(stad_str: str) -> list[str]:
-    """
-    Exacte stad-waarden om in de DB op te matchen voor een (komma-gescheiden) stad-voorkeur:
-    de slug zelf (oude records) + de officiële CBS-gemeentenaam (PDOK-waarheid op verse records).
-    Bv. 'den-haag' → ['den-haag', "'s-Gravenhage"]. Voor DB-side filtering met .in_("stad", …).
-    """
-    out = set()
-    for s in (stad_str or "").split(","):
-        s = s.strip()
-        if not s:
-            continue
-        out.add(s)
-        gem = gemeentenaam_voor_stad(s)
-        if gem:
-            out.add(gem)
-    return list(out)
 
 
 def _wfs_wijken(gemeentenaam: str) -> list[str]:
@@ -108,7 +91,7 @@ def wijken_voor_stad(stad_slug: str) -> list[str]:
     Beschikbare CBS-wijken voor een stad-slug, met cache in wijken_cache.
     Bij een API-/DB-fout → lege lijst (UI toont 'geen wijken', filter blijft leeg = alle wijken).
     """
-    stad_slug = (stad_slug or "").strip().lower()
+    stad_slug = canonical_city(stad_slug)
     if not stad_slug:
         return []
 

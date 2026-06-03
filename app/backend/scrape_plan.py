@@ -4,7 +4,7 @@ Scrape-orchestratie: exact één run per (scraper, stad) per interval.
 Steden komen uit alle user_preferences; prijs-range en types zijn de union
 over alle gebruikers die die stad zoeken. Geen per-user scrape-combinaties.
 """
-from shared.cities import normalize_city_name
+from shared.cities import stad_slugs_uit_pref
 
 _DEFAULT_MIN_PRIJS = 0
 _DEFAULT_MAX_PRIJS = 9999
@@ -25,11 +25,7 @@ def _aggregate_prefs_per_stad(prefs: list) -> dict[str, dict]:
             max_p = _DEFAULT_MAX_PRIJS
         types = pref.get("type_woning") or []
 
-        for raw in (pref.get("stad") or "").split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            slug = normalize_city_name(raw) or raw.lower().replace(" ", "-")
+        for slug in stad_slugs_uit_pref(pref.get("stad") or ""):
             if slug not in agg:
                 agg[slug] = {"min_prijs": min_p, "max_prijs": max_p, "types": set()}
             else:

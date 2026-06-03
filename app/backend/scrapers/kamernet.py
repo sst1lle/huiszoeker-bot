@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from bs4 import BeautifulSoup
 
+from shared.cities import canonical_city, stad_slugs_uit_pref
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -151,13 +152,13 @@ class KamernetScraper(BaseScraper):
 
         # Eén voorkeur kan meerdere steden bevatten ("utrecht, amsterdam"). Kamernet
         # ondersteunt geen komma-gescheiden steden in één URL → splits in losse requests per stad.
-        steden = [s.strip() for s in stad.split(",") if s.strip()]
+        steden = stad_slugs_uit_pref(stad)
 
         all_listings: list[dict] = []
         seen_urls: set[str] = set()  # gedeeld over alle steden + woningtypes om dubbels te voorkomen
 
         for enkele_stad in steden:
-            stad_slug = enkele_stad.lower().replace(" ", "-")
+            stad_slug = canonical_city(enkele_stad)
             base_urls = []
             for type_woning in scrape_types:
                 segment = TYPE_SEGMENT.get(type_woning)

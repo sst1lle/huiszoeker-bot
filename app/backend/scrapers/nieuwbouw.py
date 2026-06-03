@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
+from shared.cities import stad_nieuwbouw_city
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -42,16 +43,6 @@ _STATUS_KEYWORDS: list[tuple[str, str]] = [
     ("registratie gesloten",        "registration_closed"),
 ]
 
-_STAD_MAP = {
-    "'s-gravenhage":    "den haag",
-    "s-gravenhage":     "den haag",
-    "sgravenhage":      "den haag",
-    "the hague":        "den haag",
-    "'s-hertogenbosch": "den bosch",
-    "s-hertogenbosch":  "den bosch",
-    "shertogenbosch":   "den bosch",
-}
-
 # Geo-cache is module-level en gedeeld tussen beide scrapers binnen één run
 _geo_cache: dict[str, tuple[float | None, float | None]] = {}
 _geo_calls  = 0   # Nominatim requests in deze run (reset bij start job)
@@ -78,13 +69,6 @@ def _detect_status(card) -> tuple[str, str | None]:
             return status, phrase
 
     return "available", None
-
-
-def _normalize_city(city: str | None) -> str | None:
-    if not city:
-        return None
-    s = city.strip().lower()
-    return _STAD_MAP.get(s, s)
 
 
 def _geocode(city: str) -> tuple[float | None, float | None]:
@@ -160,7 +144,7 @@ def _parse_nn_card(card, scraped_at: str) -> dict | None:
 
         plaats_el = card.find("span", class_="plaats")
         raw_city  = plaats_el.get_text(strip=True) if plaats_el else None
-        city      = _normalize_city(raw_city)
+        city      = stad_nieuwbouw_city(raw_city)
 
         segment_el   = card.find("span", class_="segment")
         segment_text = segment_el.get_text(strip=True).lower() if segment_el else ""
@@ -295,7 +279,7 @@ def _parse_nieuwbouw_nl_card(card, type_: str, scraped_at: str) -> dict | None:
         for el in card.find_all(["p", "span", "div"]):
             txt = el.get_text(strip=True)
             if txt and txt != title and len(txt) < 40 and not re.search(r"\d", txt):
-                city = _normalize_city(txt)
+                city = stad_nieuwbouw_city(txt)
                 break
 
         card_text = card.get_text(" ", strip=True)
