@@ -131,16 +131,15 @@ class KamernetScraper(BaseScraper):
     name = "kamernet"
     robots_txt_compliant = True
     request_delay_seconds = 2.0
+    allow_flaresolverr = False  # kamernet werkt direct; Byparr hangt 70s op networkidle (SPA wordt nooit idle)
 
-    def scrape(
+    def _scrape_impl(
         self,
         stad: str,
         min_prijs: int,
         max_prijs: int,
         types: list[str],
-        radius_km: int | None = None,
     ) -> list[dict]:
-        stad_slug = stad.lower().replace(" ", "-")
         scraped_at = datetime.utcnow().isoformat()
 
         gemeubileerd_filter = "gemeubileerd" in types
@@ -150,35 +149,37 @@ class KamernetScraper(BaseScraper):
         if not scrape_types:
             scrape_types = ["appartement", "studio", "anti-kraak"]
 
-        urls_to_scrape = []
-        for type_woning in scrape_types:
-            segment = TYPE_SEGMENT.get(type_woning)
-            if not segment:
-                logger.warning(f"[{self.name}] Onbekend type: {type_woning}, overgeslagen")
-                continue
-            url = f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
-            if radius_km:
-                url += f"&radius={radius_km}"
-            if gemeubileerd_filter:
-                url += "&furnishing=furnished"
-            urls_to_scrape.append(url)
+        # Eén voorkeur kan meerdere steden bevatten ("utrecht, amsterdam"). Kamernet
+        # ondersteunt geen komma-gescheiden steden in één URL → splits in losse requests per stad.
+        steden = [s.strip() for s in stad.split(",") if s.strip()]
 
         all_listings: list[dict] = []
-        seen_urls: set[str] = set()
+        seen_urls: set[str] = set()  # gedeeld over alle steden + woningtypes om dubbels te voorkomen
 
-        for url in urls_to_scrape:
-            logger.info(f"[{self.name}] Ophalen: {url}")
-            try:
-                html = self.flare_get(url)
-            except RuntimeError as e:
-                logger.warning(f"[{self.name}] Geen HTML ontvangen voor {url}: {e}")
-                continue
+        for enkele_stad in steden:
+            stad_slug = enkele_stad.lower().replace(" ", "-")
+            base_urls = []
+            for type_woning in scrape_types:
+                segment = TYPE_SEGMENT.get(type_woning)
+                if not segment:
+                    logger.warning(f"[{self.name}] Onbekend type: {type_woning}, overgeslagen")
+                    continue
+                url = f"{BASE_URL}/en/for-rent/{segment}-{stad_slug}?maxRent={max_prijs}&minRent={min_prijs}"
+                if gemeubileerd_filter:
+                    url += "&furnishing=furnished"
+                base_urls.append(url)
 
-            listings = _parse_listings(html, stad, scraped_at)
-            for listing in listings:
-                if listing["url"] not in seen_urls:
-                    seen_urls.add(listing["url"])
-                    all_listings.append(listing)
+            # Per woningtype pagineren (Kamernet toont nieuwste eerst; paginering via &pageNo=N),
+            # met early-stop zodra een pagina geen nieuwe listings oplevert. De individuele stad
+            # gaat mee in elke listing (c=enkele_stad) voor correcte matching/notificaties.
+            for base in base_urls:
+                def page_url(page: int, base=base) -> str:
+                    return base if page == 1 else f"{base}&pageNo={page}"
+                all_listings += self._scrape_paginated(
+                    page_url,
+                    lambda html, c=enkele_stad: _parse_listings(html, c, scraped_at),
+                    seen_this_run=seen_urls,
+                )
 
         logger.info(f"[{self.name}] {len(all_listings)} woningen gevonden voor {stad}")
         return all_listings

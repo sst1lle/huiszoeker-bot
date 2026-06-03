@@ -15,7 +15,6 @@ function openEdit(btn) {
   document.getElementById('edit-min').value      = u.min_prijs;
   document.getElementById('edit-max').value      = u.max_prijs;
   document.getElementById('edit-telegram').value = u.telegram_chat_id;
-  document.getElementById('edit-radius').value   = u.radius_km || '';
   document.getElementById('edit-err').style.display = 'none';
   document.querySelectorAll('#edit-types input').forEach(cb => {
     cb.checked = u.type_woning.includes(cb.value);
@@ -35,7 +34,6 @@ async function saveEdit() {
     max_prijs:        parseInt(document.getElementById('edit-max').value) || 1500,
     telegram_chat_id: document.getElementById('edit-telegram').value.trim(),
     type_woning:      types,
-    radius_km:        parseInt(document.getElementById('edit-radius').value) || null,
   };
   const r = await fetch(`/api/admin/users/${uid}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },

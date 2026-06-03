@@ -9,7 +9,7 @@ A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda e
 - Web dashboard with listing cards, filtering, and pagination
 - Multi-user: each user sets their own city, price range, housing types, and search radius
 - Admin panel to manage users and toggle scrapers on/off
-- Cloudflare bypass via FlareSolverr (required for Pararius and Funda)
+- Cloudflare bypass via Byparr (required for Pararius and Funda)
 - Historical snapshots stored as Parquet files (queryable with DuckDB)
 - Listing availability validated every 6 hours (404 → marked unavailable)
 - AI-powered motivation letter generator via Groq (LLaMA 3.1 70B)
@@ -23,7 +23,7 @@ A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda e
 | Database & Auth | Supabase (PostgreSQL + Row Level Security) |
 | Telegram | python-telegram-bot |
 | Scraping | requests + BeautifulSoup4 |
-| Cloudflare bypass | FlareSolverr |
+| Cloudflare bypass | Byparr |
 | Data lake | Parquet via pandas + PyArrow |
 | AI | Groq API (LLaMA 3.1 70B) |
 | Deployment | Docker Compose |

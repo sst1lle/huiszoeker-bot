@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Scraper beheer — Huursignal{% endblock %}
 {% block content %}
+<style>
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:#2563eb;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.test-result{font-size:13px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px}
+.test-head{font-weight:600;margin-bottom:4px}
+.test-err{color:#b91c1c;margin-top:6px}
+.test-warn{color:#92400e}
+.test-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.test-table th,.test-table td{text-align:left;padding:4px 6px;border-bottom:1px solid #eef2f7}
+</style>
 <div class="container">
   <div class="page-head">
     <h1>Scraper beheer</h1>
@@ -41,8 +51,11 @@
             {% if s.error_message %}
             <div class="scraper-error">⚠ {{ s.error_message }}</div>
             {% endif %}
+            <div class="test-result" id="tr-{{ s.name }}" style="display:none;margin-top:10px"></div>
           </div>
           <div class="toggle-wrap">
+            <button class="btn btn-sm btn-outline" id="testbtn-{{ s.name }}"
+                    onclick="testScraper('{{ s.name }}')" style="margin-right:10px">Test</button>
             <span class="toggle-label" id="lbl-{{ s.name }}">{{ 'Aan' if s.enabled else 'Uit' }}</span>
             <label class="toggle" title="{{ 'Uitschakelen' if s.enabled else 'Inschakelen' }}">
               <input type="checkbox" {{ 'checked' if s.enabled else '' }}
@@ -82,6 +95,54 @@ async function toggleScraper(name, checkbox) {
     }
   } catch {
     checkbox.checked = !enabled;
+  }
+}
+
+const BYPARR_SCRAPERS = ['funda', 'pararius'];
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+async function testScraper(name) {
+  const btn = document.getElementById('testbtn-' + name);
+  const out = document.getElementById('tr-' + name);
+  const isByparr = BYPARR_SCRAPERS.includes(name);
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Bezig…';
+  out.style.display = 'block';
+  out.innerHTML = '<span class="spinner"></span>Bezig met testen…'
+    + (isByparr ? ' <span class="test-warn">Funda/Pararius draaien via Byparr (serieel) — dit kan 10-45s duren.</span>' : '');
+  try {
+    const r = await fetch('/admin/test-scraper/' + encodeURIComponent(name), { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) { out.innerHTML = '<div class="test-err">❌ ' + esc(d.error || 'Test mislukt') + '</div>'; return; }
+
+    let html = '<div class="test-head">✓ ' + d.aantal + ' listings gevonden · ' + d.seconden + 's';
+    if (d.byparr_needed) html += ' · Byparr: ' + (d.byparr_ok ? '🟢 online' : '🔴 offline');
+    html += '</div>';
+
+    if (d.errors && d.errors.length) {
+      const reason = (d.byparr_needed && !d.byparr_ok)
+        ? '<br><strong>Waarschijnlijke oorzaak: Byparr is offline.</strong>' : '';
+      html += '<div class="test-err">⚠ ' + d.errors.map(esc).join('<br>') + reason + '</div>';
+    }
+
+    if (d.preview && d.preview.length) {
+      html += '<table class="test-table"><thead><tr><th>Adres</th><th>Prijs</th><th>Wijk</th><th>Stad</th><th></th></tr></thead><tbody>';
+      for (const p of d.preview) {
+        html += '<tr><td>' + esc(p.titel) + '</td>'
+              + '<td>' + (p.prijs ? '€' + p.prijs : '—') + '</td>'
+              + '<td>' + esc(p.wijk || '—') + '</td>'
+              + '<td>' + esc(p.stad || '—') + '</td>'
+              + '<td>' + (p.url ? '<a href="' + esc(p.url).replace(/"/g,'&quot;') + '" target="_blank">link</a>' : '') + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    } else if (!(d.errors && d.errors.length)) {
+      html += '<div class="hint">Geen listings gevonden.</div>';
+    }
+    out.innerHTML = html;
+  } catch (e) {
+    out.innerHTML = '<div class="test-err">❌ Netwerkfout: ' + esc(String(e)) + '</div>';
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
   }
 }
 </script>

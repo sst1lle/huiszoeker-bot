@@ -59,7 +59,7 @@ def _adres_uit_slug(rel_url: str) -> str | None:
 
 class FundaScraper(BaseScraper):
     """
-    Scraper voor Funda huurwoningen via FlareSolverr + Nuxt 3 __NUXT_DATA__ parse.
+    Scraper voor Funda huurwoningen via Byparr + Nuxt 3 __NUXT_DATA__ parse.
 
     Funda migreerde van Next.js naar Nuxt.js. Listing-data zit in
     <script id="__NUXT_DATA__"> als een gecomprimeerde pointer-array:
@@ -86,29 +86,26 @@ class FundaScraper(BaseScraper):
         "parking":   "parkeerplaats",
     }
 
-    def scrape(
+    def _scrape_impl(
         self,
         stad: str,
         min_prijs: int,
         max_prijs: int,
         types: list[str],
-        radius_km: int | None = None,
     ) -> list[dict]:
-        return self._via_flaresolverr(stad, min_prijs, max_prijs)
-
-    def _via_flaresolverr(self, stad: str, min_prijs: int, max_prijs: int) -> list[dict]:
-        url = (
+        stad_slug = stad.lower().replace(" ", "-")
+        base = (
             f"{BASE_URL}/zoeken/huur"
-            f"?selected_area=%5B%22{stad.lower().replace(' ', '-')}%22%5D"
+            f"?selected_area=%5B%22{stad_slug}%22%5D"
             f"&price=%22-{max_prijs}%22"
+            f"&sort=%22date_down%22"  # nieuwste eerst
         )
-        logger.debug(f"[{self.name}] FlareSolverr: {url}")
-        html = self.flare_get(url)  # raises RuntimeError on failure
 
-        if len(html) < 1000:
-            raise RuntimeError(f"FlareSolverr HTML te klein ({len(html)} bytes) — mogelijk geblokkeerd")
+        # Funda pagineert via &search_result=N
+        def page_url(page: int) -> str:
+            return base if page == 1 else f"{base}&search_result={page}"
 
-        return self._parse_nuxtdata(html, stad)
+        return self._scrape_paginated(page_url, lambda html: self._parse_nuxtdata(html, stad))
 
     def _parse_nuxtdata(self, html: str, stad: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")

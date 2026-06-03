@@ -80,25 +80,22 @@ class ParariusScraper(BaseScraper):
     uses_types = False  # Pararius-URL heeft geen type-filter; retourneert altijd alle typen
     flaresolverr_only = True
 
-    def scrape(
+    def _scrape_impl(
         self,
         stad: str,
         min_prijs: int,
         max_prijs: int,
         types: list[str],
-        radius_km: int | None = None,
     ) -> list[dict]:
-        target_url = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
-        if radius_km:
-            target_url += f"/straal-{radius_km}"
+        base = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
 
-        logger.info(f"[{self.name}] Fetch via FlareSolverr: {target_url}")
-        try:
-            html = self.flare_get(target_url)
-        except RuntimeError as e:
-            logger.error(f"[{self.name}] {e}")
-            return []
+        # Pararius toont standaard de nieuwste listings eerst; paginering via /page-N
+        def page_url(page: int) -> str:
+            return base if page == 1 else f"{base}/page-{page}"
 
+        return self._scrape_paginated(page_url, lambda html: self._parse_html(html, stad))
+
+    def _parse_html(self, html: str, stad: str) -> list[dict]:
         if "Just a moment" in html:
             logger.warning(f"[{self.name}] Cloudflare blocking detected")
             return []

@@ -8,6 +8,7 @@ from db import get_db
 from crypto import encrypt, safe_decrypt
 from ..decorators import login_required
 from ..helpers import WONING_TYPES, get_bot_username
+from shared.wijken import wijken_voor_stad
 
 pref_bp = Blueprint("pref", __name__)
 
@@ -18,6 +19,12 @@ def _decrypt_pref(pref: dict) -> dict:
     pref["naam"] = safe_decrypt(pref.get("naam"))
     pref["telegram_chat_id"] = safe_decrypt(pref.get("telegram_chat_id"))
     return pref
+
+
+def _wijken_per_stad(stad_str: str) -> dict:
+    """Beschikbare wijken per (komma-gescheiden) stad voor de selector."""
+    steden = [s.strip() for s in (stad_str or "").split(",") if s.strip()]
+    return {s: wijken_voor_stad(s) for s in steden}
 
 
 @pref_bp.route("/onboarding")
@@ -37,6 +44,7 @@ def instellingen():
     # PRIVACY-FIX: decrypt PII fields before passing to template
     pref = _decrypt_pref(pref)
     return render_template("instellingen.html", pref=pref, woning_types=WONING_TYPES,
+                           wijken_per_stad=_wijken_per_stad(pref.get("stad", "")),
                            bot_username=get_bot_username())
 
 
@@ -56,7 +64,7 @@ def api_preferences():
         "min_prijs":        data.get("min_prijs"),
         "max_prijs":        data.get("max_prijs"),
         "type_woning":      data.get("type_woning", []),
-        "radius_km":        data.get("radius_km") or None,
+        "gewenste_wijken":  data.get("gewenste_wijken", []),
         "updated_at":       datetime.now(timezone.utc).isoformat(),
     }
 
@@ -67,6 +75,13 @@ def api_preferences():
         db.table("user_preferences").insert(pref_data).execute()
 
     return jsonify({"ok": True})
+
+
+@pref_bp.route("/api/wijken")
+@login_required
+def api_wijken():
+    """Beschikbare CBS-wijken voor een stad-slug (voor de live wijken-selector)."""
+    return jsonify({"wijken": wijken_voor_stad(request.args.get("stad", ""))})
 
 
 @pref_bp.route("/onboarding/validate")

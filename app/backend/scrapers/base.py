@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import threading
@@ -7,8 +8,9 @@ from queue import Queue
 
 logger = logging.getLogger(__name__)
 
-_FLARESOLVERR_URL = "http://flaresolverr:8191/v1"
+_FLARESOLVERR_URL = "http://byparr:8191/v1"
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+MAX_PAGES = int(os.getenv("MAX_PAGES", "3"))  # max pagina's per scraper (Funda/Pararius/Kamernet); configureerbaar via .env
 
 
 class BaseScraper(ABC):
@@ -51,11 +53,13 @@ class BaseScraper(ABC):
     request_delay_seconds: float = 2.0  # ethisch scrapen
     uses_types: bool = True  # False als scraper types intern negeert (bijv. Pararius geeft altijd alle typen)
     flaresolverr_only: bool = False  # True als directe requests altijd geblokkeerd zijn (Funda, Pararius)
+    allow_flaresolverr: bool = True   # False = nooit terugvallen op Byparr (bijv. kamernet: werkt direct, SPA haalt nooit 'networkidle')
 
     # Per-loop URL → HTML cache (class-level = gedeeld tussen alle scraper instanties)
     _cache: dict = {}
     _cache_lock: threading.Lock = threading.Lock()
     _stats: dict = {"direct": 0, "flare": 0, "cache": 0}
+    _known_urls_cache: dict = {}  # source → set(url's al in DB); per loop geladen, gereset in clear_cache
 
     @classmethod
     def clear_cache(cls) -> None:
@@ -63,6 +67,7 @@ class BaseScraper(ABC):
         with cls._cache_lock:
             BaseScraper._cache.clear()
             BaseScraper._stats = {"direct": 0, "flare": 0, "cache": 0}
+            BaseScraper._known_urls_cache = {}
 
     @classmethod
     def flare_get(cls, url: str) -> str:
@@ -71,11 +76,12 @@ class BaseScraper(ABC):
 
         Volgorde:
         1. Cache check — geeft gecachede HTML terug als beschikbaar
-        2. Direct request — tenzij cls.flaresolverr_only=True
-        3. FlareSolverr fallback — bij 403/429/Cloudflare detectie of verbindingsfout
+        2. Direct request (max 3 pogingen) — tenzij cls.flaresolverr_only=True
+        3. Byparr fallback — bij 403/429/Cloudflare detectie of verbindingsfout,
+           tenzij cls.allow_flaresolverr=False (dan faalt het snel na de directe pogingen)
 
         Thread-safe via double-checked locking.
-        Raises RuntimeError als zowel direct als FlareSolverr mislukken.
+        Raises RuntimeError als zowel direct als Byparr mislukken.
         """
         # Stap 1: cache check
         with cls._cache_lock:
@@ -84,22 +90,29 @@ class BaseScraper(ABC):
                 logger.debug(f"[cache] Hit: {url[:80]}")
                 return BaseScraper._cache[url]
 
-        # Stap 2: direct request (overgeslagen als scraper altijd geblokkeerd is)
+        # Stap 2: direct request met retry (overgeslagen als scraper altijd geblokkeerd is)
         if not cls.flaresolverr_only:
-            try:
-                r = requests.get(url, timeout=15, headers={"User-Agent": _UA})
-                if r.status_code == 200 and "Just a moment" not in r.text:
-                    html = r.text
-                    with cls._cache_lock:
-                        BaseScraper._stats["direct"] += 1
-                        if url not in BaseScraper._cache:
-                            BaseScraper._cache[url] = html
-                    return html
-                logger.debug(f"[cache] Direct geblokkeerd (HTTP {r.status_code}), FlareSolverr: {url[:60]}")
-            except Exception as e:
-                logger.debug(f"[cache] Direct request mislukt ({e}), FlareSolverr: {url[:60]}")
+            for attempt in range(3):
+                try:
+                    r = requests.get(url, timeout=15, headers={"User-Agent": _UA})
+                    if r.status_code == 200 and "Just a moment" not in r.text:
+                        html = r.text
+                        with cls._cache_lock:
+                            BaseScraper._stats["direct"] += 1
+                            if url not in BaseScraper._cache:
+                                BaseScraper._cache[url] = html
+                        return html
+                    logger.debug(f"[cache] Direct geblokkeerd (HTTP {r.status_code}), poging {attempt + 1}/3: {url[:60]}")
+                except Exception as e:
+                    logger.debug(f"[cache] Direct request mislukt ({e}), poging {attempt + 1}/3: {url[:60]}")
+                if attempt < 2:
+                    time.sleep(1)
 
-        # Stap 3: FlareSolverr
+        # Stap 2b: scrapers die expliciet geen Byparr-fallback willen (direct werkt; browser hangt op networkidle)
+        if not cls.allow_flaresolverr:
+            raise RuntimeError("Direct gefaald na 3 pogingen en Byparr-fallback uitgeschakeld voor deze scraper")
+
+        # Stap 3: Byparr
         try:
             r = requests.post(_FLARESOLVERR_URL, json={
                 "cmd": "request.get",
@@ -108,12 +121,12 @@ class BaseScraper(ABC):
             }, timeout=70)
             data = r.json()
             if data.get("status") != "ok":
-                raise RuntimeError(f"FlareSolverr fout: {data.get('message')}")
+                raise RuntimeError(f"Byparr fout: {data.get('message')}")
             html = data["solution"]["response"]
         except RuntimeError:
             raise
         except Exception as e:
-            raise RuntimeError(f"FlareSolverr verbindingsfout: {e}") from e
+            raise RuntimeError(f"Byparr verbindingsfout: {e}") from e
 
         with cls._cache_lock:
             BaseScraper._stats["flare"] += 1
@@ -121,19 +134,117 @@ class BaseScraper(ABC):
                 BaseScraper._cache[url] = html
         return html
 
-    @abstractmethod
+    @classmethod
+    def known_urls(cls, source: str) -> set:
+        """
+        Set van url's die al in de listings-tabel staan voor deze bron.
+        Eénmalig per loop uit Supabase geladen en gecachet (gereset in clear_cache()).
+
+        Gebruikt voor early-stop bij paginering: bij nieuwste-eerst betekent een
+        pagina zonder nieuwe url's dat verdere pagina's ook niets nieuws bevatten.
+        Bij een DB-fout valt het terug op een lege set → geen early-stop, gewoon
+        tot MAX_PAGES doorscrapen.
+        """
+        with cls._cache_lock:
+            if source in BaseScraper._known_urls_cache:
+                return BaseScraper._known_urls_cache[source]
+        try:
+            from db import get_db
+            # limit hoog genoeg voor de volledige bron; PostgREST geeft anders max 1000 rijen terug
+            rows = (
+                get_db().table("listings").select("url")
+                .eq("source", source).limit(50000).execute().data
+            ) or []
+            urls = {r["url"] for r in rows if r.get("url")}
+        except Exception as e:
+            logger.warning(f"[{source}] known_urls: DB niet leesbaar ({e}); early-stop uitgeschakeld deze run")
+            urls = set()
+        with cls._cache_lock:
+            BaseScraper._known_urls_cache[source] = urls
+        return urls
+
+    def _scrape_paginated(self, page_url_fn, parse_html_fn, source: str | None = None, seen_this_run: set | None = None) -> list[dict]:
+        """
+        Generieke paginering met early-stop voor scrapers die per pagina HTML ophalen.
+
+        - page_url_fn(page_num) → url voor die pagina (pagina 1..MAX_PAGES, nieuwste eerst)
+        - parse_html_fn(html)   → lijst listing-dicts (elk met "url")
+        - source                → bron-naam voor known_urls (default self.name)
+        - seen_this_run         → gedeelde set om over meerdere aanroepen heen te ontdubbelen
+                                  (bijv. Kamernet dat per woningtype pagineert)
+
+        Stopt zodra een pagina geen enkele nieuwe url oplevert (niet in DB én niet
+        al deze run gezien) of leeg is, of bij een ophaalfout. Geeft de gecombineerde,
+        binnen-run ontdubbelde lijst terug (zowel nieuwe als reeds bekende listings).
+        """
+        source = source or self.name
+        known = self.known_urls(source)
+        if seen_this_run is None:
+            seen_this_run = set()
+        results: list[dict] = []
+
+        for page in range(1, MAX_PAGES + 1):
+            url = page_url_fn(page)
+            try:
+                html = self.flare_get(url)
+            except RuntimeError as e:
+                logger.warning(f"[{self.name}] pagina {page} overgeslagen: {e}")
+                break
+
+            listings = parse_html_fn(html)
+            if not listings:
+                logger.info(f"[{self.name}] pagina {page}: geen listings, stoppen")
+                break
+
+            nieuw = 0
+            for lst in listings:
+                u = lst.get("url")
+                if not u or u in seen_this_run:
+                    continue
+                seen_this_run.add(u)
+                results.append(lst)
+                if u not in known:
+                    nieuw += 1
+
+            logger.info(f"[{self.name}] pagina {page}/{MAX_PAGES}: {len(listings)} listings, {nieuw} nieuw")
+            if nieuw == 0:
+                logger.info(f"[{self.name}] pagina {page}: geen nieuwe listings — vroege stop")
+                break
+
+        return results
+
     def scrape(
         self,
         stad: str,
         min_prijs: int,
         max_prijs: int,
         types: list[str],
-        radius_km: int | None = None,
     ) -> list[dict]:
         """
-        Scrape listings voor gegeven parameters.
-        Geeft lijst van listing-dicts terug volgens het standaard schema hierboven.
-        Nooit een exception throwen — vang intern op en log.
+        Publieke ingang met scheduler-guard. Directe aanroep (import, container-start,
+        losse scripts) is geblokkeerd tenzij binnen run_scraper() of met FORCE_SCRAPE=true.
+        De echte logica zit in _scrape_impl().
+        """
+        if os.getenv("FORCE_SCRAPE") != "true":
+            from scheduler.scrape_scheduler import in_scheduler_context
+            if not in_scheduler_context():
+                raise RuntimeError(
+                    f"Directe scrape geblokkeerd voor '{self.name}' — "
+                    f"gebruik run_scraper() of zet FORCE_SCRAPE=true."
+                )
+        return self._scrape_impl(stad, min_prijs, max_prijs, types)
+
+    @abstractmethod
+    def _scrape_impl(
+        self,
+        stad: str,
+        min_prijs: int,
+        max_prijs: int,
+        types: list[str],
+    ) -> list[dict]:
+        """
+        Echte scrape-implementatie per scraper. Geeft listing-dicts terug volgens het
+        standaard schema hierboven. Nooit een exception throwen — vang intern op en log.
         """
         ...
 
@@ -144,14 +255,13 @@ class BaseScraper(ABC):
         max_prijs: int,
         types: list[str],
         result_queue: Queue,
-        radius_km: int | None = None,
     ) -> None:
         """
         Queue-based wrapper voor Ray-compatibiliteit.
         Sprint 6: vervang Queue door ray.util.queue.Queue zonder verdere wijzigingen.
         """
         try:
-            results = self.scrape(stad, min_prijs, max_prijs, types, radius_km=radius_km)
+            results = self._scrape_impl(stad, min_prijs, max_prijs, types)
             for listing in results:
                 result_queue.put(listing)
         except Exception as e:

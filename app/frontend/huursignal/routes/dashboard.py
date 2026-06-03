@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Blueprint, session, redirect, url_for, request, render_template
 
 from db import get_db
+from shared.wijken import stad_db_variants
 from ..decorators import login_required
 
 dash_bp = Blueprint("dash", __name__)
@@ -88,9 +89,11 @@ def dashboard():
     types     = pref.get("type_woning") or []
 
     # ── Huurwoningen ──────────────────────────────────────────────────────────
+    # Match op de echte (PDOK-)stad: slug + officiële gemeentenaam (bv. den-haag + 's-Gravenhage),
+    # zodat listings uit omliggende steden (Delft/Rotterdam) niet meegenomen worden.
     query = (db.table("listings")
                .select("*", count="exact")
-               .eq("stad", stad)
+               .in_("stad", stad_db_variants(stad))
                .eq("beschikbaar", True)
                .gte("prijs", min_prijs)
                .lte("prijs", max_prijs)

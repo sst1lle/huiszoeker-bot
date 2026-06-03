@@ -116,13 +116,13 @@ def _get(url: str, label: str) -> tuple[str | None, str]:
         r = requests.get(url, timeout=_TIMEOUT, headers={"User-Agent": _UA}, allow_redirects=True)
         if r.status_code == 200 and "Just a moment" not in r.text:
             return r.text, "requests"
-        print(f"[nieuwbouw] {label}: HTTP {r.status_code} — FlareSolverr fallback", flush=True)
+        print(f"[nieuwbouw] {label}: HTTP {r.status_code} — Byparr fallback", flush=True)
     except Exception as e:
-        print(f"[nieuwbouw] {label}: requests mislukt ({e}) — FlareSolverr fallback", flush=True)
+        print(f"[nieuwbouw] {label}: requests mislukt ({e}) — Byparr fallback", flush=True)
 
     try:
         html = BaseScraper.flare_get(url)
-        print(f"[nieuwbouw] {label}: flaresolverr OK", flush=True)
+        print(f"[nieuwbouw] {label}: byparr OK", flush=True)
         return html, "flaresolverr"
     except Exception as e:
         print(f"[nieuwbouw] {label}: beide methodes mislukt: {e}", flush=True)
@@ -418,7 +418,7 @@ class NieuwbouwNederlandScraper(BaseScraper):
     category = "nieuwbouw"
     excluded_from_main_loop = True
 
-    def scrape(self, stad, min_prijs, max_prijs, types, radius_km=None):
+    def _scrape_impl(self, stad, min_prijs, max_prijs, types):
         return []
 
     def scrape_projecten(self) -> list[dict]:
@@ -440,7 +440,7 @@ class NieuwbouwNlScraper(BaseScraper):
     category = "nieuwbouw"
     excluded_from_main_loop = True
 
-    def scrape(self, stad, min_prijs, max_prijs, types, radius_km=None):
+    def _scrape_impl(self, stad, min_prijs, max_prijs, types):
         return []
 
     def scrape_projecten(self) -> list[dict]:

@@ -1,16 +1,17 @@
-version: '3.9'
 services:
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: byparr
     restart: unless-stopped
+    init: true
     environment:
       - LOG_LEVEL=info
+    shm_size: 512m
     deploy:
       resources:
         limits:
           cpus: '1.5'
-          memory: 1G
+          memory: 2G
     networks:
       - huiszoeker_default
 
@@ -29,7 +30,7 @@ services:
       - ${DATA_DIR:-/mnt/ssd}/huursignal/datalake:/app/datalake
     shm_size: 512m
     depends_on:
-      - flaresolverr
+      - byparr
 
   webinterface:
     build: .
@@ -46,8 +47,8 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - PYTHONPATH=/app/frontend:/app
-    command: gunicorn -w 4 -b 0.0.0.0:5000 web:app
+      - PYTHONPATH=/app/frontend:/app/backend:/app
+    command: gunicorn -w 4 -b 0.0.0.0:5000 --timeout 180 web:app
 
 networks:
   huiszoeker_default:

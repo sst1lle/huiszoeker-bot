@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import asyncio
 import importlib
@@ -8,13 +9,13 @@ import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
-from apscheduler.schedulers.background import BackgroundScheduler
-
 from db import get_db
 from crypto import safe_decrypt  # PRIVACY-FIX: decrypt PII fields before use
 from scrapers.base import BaseScraper
 from deduplicator import Deduplicator
 from storage import ListingStorage
+from shared.geocoder import geocode
+from scheduler.scrape_scheduler import run_scraper
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 load_dotenv()
@@ -172,6 +173,7 @@ def valideer_listings():
 _SUPABASE_LISTING_FIELDS = {
     "source", "external_id", "url", "adres", "stad",
     "prijs", "oppervlakte", "type_woning", "foto_url", "beschikbaar",
+    "postcode", "wijk", "buurt", "lat", "lng",
 }
 
 
@@ -182,7 +184,9 @@ def upsert_listing(listing: dict) -> str | None:
 
     db = get_db()
 
-    bestaand = db.table("listings").select("id, beschikbaar, prijs").eq("url", listing["url"]).execute()
+    bestaand = (db.table("listings")
+                .select("id, beschikbaar, prijs, postcode, wijk, buurt, lat, lng")
+                .eq("url", listing["url"]).execute())
 
     if bestaand.data:
         record = bestaand.data[0]
@@ -194,6 +198,13 @@ def upsert_listing(listing: dict) -> str | None:
             for field in ("adres", "stad", "prijs", "oppervlakte", "type_woning", "foto_url"):
                 if listing.get(field) is not None:
                     updates[field] = listing[field]
+        # Geo-velden + stad verversen zodra deze listing dit run succesvol gegeocode is.
+        # NB: street-level matches (bv. "Straat, Delft" zonder huisnummer) hebben géén postcode
+        # maar wél stad/wijk/coördinaten → die willen we óók verwerken; daarom NIET op postcode gaten.
+        if any(listing.get(f) is not None for f in ("wijk", "lat", "lng", "postcode")):
+            for field in ("postcode", "wijk", "buurt", "lat", "lng", "stad"):
+                if listing.get(field) is not None:
+                    updates[field] = listing[field]
         db.table("listings").update(updates).eq("id", record["id"]).execute()
         return record["id"]
 
@@ -202,6 +213,34 @@ def upsert_listing(listing: dict) -> str | None:
     nieuw = {**supabase_data, "eerste_gezien": nu, "created_at": nu, "laatst_gevalideerd": nu}
     result = db.table("listings").insert(nieuw).execute()
     return result.data[0]["id"] if result.data else None
+
+
+async def verrijk_met_geocoding(listings: list[dict]) -> None:
+    """
+    Vul postcode/wijk/buurt/lat/lng per listing via PDOK (gecachet in geocode_cache).
+    Muteert de listing-dicts in-place. PDOK-fouten/missers laten de listing ongemoeid.
+    """
+    sem = asyncio.Semaphore(8)  # vriendelijk voor PDOK; cache-hits zijn snel
+
+    async def _verrijk(lst: dict) -> None:
+        adres = (lst.get("adres") or "").strip()
+        if not adres:
+            return
+        stad = (lst.get("stad") or "").strip()
+        # Bevat het adres al een stad (bv. Kamernet "Straat, Delft")? Dan NIET de scraper-stad
+        # aanhangen — "Delft den-haag" verwart PDOK. Anders helpt de scraper-stad de match.
+        # GEEN gemeente-constraint: PDOK mag de echte stad teruggeven.
+        query = adres if "," in adres else f"{adres} {stad}".strip()
+        async with sem:
+            geo = await geocode(query)
+        if geo:
+            for field in ("postcode", "wijk", "buurt", "lat", "lng"):
+                lst[field] = geo.get(field)
+            # PDOK-stad is de waarheid (niet de stad uit de scraper-URL)
+            if geo.get("stad"):
+                lst["stad"] = geo["stad"]
+
+    await asyncio.gather(*(_verrijk(lst) for lst in listings))
 
 
 def registreer_scrapers(scrapers: list) -> None:
@@ -300,49 +339,81 @@ def bouw_combis(scrapers: list, prefs: list) -> dict:
     combis = {}
     for scraper in [s for s in scrapers if not getattr(s, "excluded_from_main_loop", False)]:
         for pref in prefs:
-            stad = (pref.get("stad") or "").strip()
-            if not stad:
+            stad_raw = (pref.get("stad") or "").strip()
+            if not stad_raw:
                 continue
+            # Eén voorkeur kan meerdere steden bevatten ("utrecht, amsterdam").
+            # Splits centraal in losse combis per stad — geen enkele scraper kan
+            # komma-gescheiden steden in één URL aan (Kamernet 404't, Funda/Pararius idem).
+            steden = [s.strip() for s in stad_raw.split(",") if s.strip()]
             min_p = pref.get("min_prijs") or 0
             max_p = pref.get("max_prijs") or 1500
             types = pref.get("type_woning") or []
-            radius = pref.get("radius_km") or None
-
             types_deel = "" if not scraper.uses_types else ",".join(sorted(types))
-            key = f"{scraper.name}-{stad}-{min_p}-{max_p}-{types_deel}-r{radius}"
 
-            if key not in combis:
-                combis[key] = {
-                    "scraper": scraper,
-                    "stad": stad,
-                    "min_prijs": min_p,
-                    "max_prijs": max_p,
-                    "types": types,
-                    "radius_km": radius,
-                }
+            for stad in steden:
+                key = f"{scraper.name}-{stad}-{min_p}-{max_p}-{types_deel}"
+                if key not in combis:
+                    combis[key] = {
+                        "scraper": scraper,
+                        "stad": stad,
+                        "min_prijs": min_p,
+                        "max_prijs": max_p,
+                        "types": types,
+                    }
     return combis
 
 
+# Bekende stadsnaam-aliassen (officiële CBS-naam ↔ volksnaam) → zelfde genormaliseerde slug
+_CITY_ALIASES = {
+    "s-gravenhage": "den-haag",   # PDOK woonplaatsnaam voor Den Haag
+}
+
+
+def normalize_city_name(name: str) -> str:
+    """
+    Normaliseer een stadsnaam naar een vergelijkbare slug (case-insensitief, geslugified).
+    'Den Haag' / 'den-haag' / "'s-Gravenhage" / 's gravenhage' → allemaal 'den-haag'.
+    """
+    if not name:
+        return ""
+    s = name.strip().lower().replace("'", "")        # "'s-gravenhage" → "s-gravenhage"
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")      # spaties/leestekens → '-'
+    return _CITY_ALIASES.get(s, s)
+
+
 def zoek_nieuwe_voor_user(pref: dict) -> list:
-    """Haal listings op die matchen met de voorkeur en nog niet verstuurd zijn."""
+    """
+    Haal listings op die matchen met de voorkeur en nog niet verstuurd zijn.
+
+    Validatievolgorde: STAD-validatie (primair, op de ECHTE PDOK-stad) → type → WIJK.
+    De wijk-validatie draait nooit op listings buiten de gewenste stad(en).
+    """
     db = get_db()
     user_id = pref.get("user_id")
-    stad = pref.get("stad", "")
     min_prijs = pref.get("min_prijs") or 0
     max_prijs = pref.get("max_prijs") or 9999
     types = pref.get("type_woning") or []
+
+    # Gewenste steden (genormaliseerd) — primaire filter
+    gewenste_steden = {normalize_city_name(s) for s in (pref.get("stad") or "").split(",") if s.strip()}
+    gewenste_wijken = pref.get("gewenste_wijken") or []
+    wijk_filter = {w.strip().lower() for w in gewenste_wijken if w and w.strip()}
+    if not wijk_filter:
+        print(f"[notificaties] Geen wijk filter: alle wijken voor {user_id}", flush=True)
 
     # Al-verstuurde listing IDs voor deze user
     sent = db.table("sent_notifications").select("listing_id").eq("user_id", user_id).execute()
     al_gestuurd = {row["listing_id"] for row in (sent.data or [])}
 
-    # Listings ophalen op stad + prijsrange
+    # NB: geen .eq("stad", …) meer — stad-validatie gebeurt in Python op de echte PDOK-stad,
+    # genormaliseerd (de opgeslagen stad kan 's-Gravenhage/Delft/… zijn).
     listings = (db.table("listings")
                 .select("*")
-                .eq("stad", stad)
                 .eq("beschikbaar", True)
                 .gte("prijs", min_prijs)
                 .lte("prijs", max_prijs)
+                .limit(10000)
                 .execute()
                 .data or [])
 
@@ -355,11 +426,31 @@ def zoek_nieuwe_voor_user(pref: dict) -> list:
             continue
         if "parkeergelegenheid" in (listing.get("url") or ""):
             continue
+
+        # 1. STAD-VALIDATIE (primair) — op de echte PDOK-stad
+        listing_stad = normalize_city_name(listing.get("stad") or "")
+        print(f"[validatie] Geocode stad={listing_stad or '?'} bron=PDOK", flush=True)
+        if gewenste_steden and listing_stad not in gewenste_steden:
+            print(f"[validatie] Stad mismatch: listing={listing_stad or '?'} user={','.join(sorted(gewenste_steden))}", flush=True)
+            continue
+        print(f"[validatie] Stad OK: {listing_stad}", flush=True)
+
+        # 2. type-check (alleen bronnen met betrouwbaar type)
         source = listing.get("source", "")
         if source not in _SKIP_TYPE_CHECK:
             listing_type = listing.get("type_woning")
             if listing_type and types and listing_type not in types:
                 continue
+
+        # 3. WIJK-VALIDATIE — draait NOOIT op listings buiten de gewenste stad (zie hierboven).
+        #    Leeg wijk_filter = geen filter → alle wijken binnen de stad (veilige fallback).
+        if wijk_filter:
+            listing_wijk = (listing.get("wijk") or "").strip().lower()
+            if listing_wijk not in wijk_filter:
+                print(f"[validatie] Wijk mismatch: {listing_wijk or '?'} != {','.join(sorted(wijk_filter))}", flush=True)
+                continue
+            print(f"[notificaties] Wijk match: {listing.get('wijk')} in gewenste wijken van {user_id}", flush=True)
+
         nieuw.append(listing)
 
     return nieuw
@@ -478,67 +569,40 @@ def _update_nieuwbouw_lifecycle(db, scraped_urls: set) -> None:
         print(f"[nieuwbouw] Lifecycle update fout: {e}", flush=True)
 
 
-def scrape_nieuwbouw_job(nieuwbouw_scrapers: list) -> None:
+def _scrape_een_nieuwbouw(db, scraper) -> set:
     """
-    Wekelijkse job: scrapet elke nieuwbouwbron afzonderlijk.
-    Elke scraper heeft zijn eigen enabled-toggle, last_run en status in scraper_config.
+    Scrape één nieuwbouwbron en upsert de projecten. Geeft de gescrapete URLs terug.
+    Wordt uitsluitend via de scheduler-gateway (run_scraper) aangeroepen.
     """
-    print("[nieuwbouw] Wekelijkse scrape gestart", flush=True)
-    try:
-        db = get_db()
-        nu = datetime.now(timezone.utc).isoformat()
-        configs = {c["name"]: c["enabled"] for c in (
-            db.table("scraper_config").select("name, enabled").execute().data or []
-        )}
+    nu = datetime.now(timezone.utc).isoformat()
+    scraped_urls: set = set()
+    print(f"[nieuwbouw] === Start {scraper.name} ===", flush=True)
+    projecten = scraper.scrape_projecten()
 
-        all_scraped_urls: set = set()
+    geslaagd = mislukt = hidden = 0
+    for project in projecten:
+        try:
+            db.table("nieuwbouw_projects").upsert(project, on_conflict="url").execute()
+            scraped_urls.add(project["url"])
+            geslaagd += 1
+            if project.get("status") in ("sold_out", "rented_out", "under_option", "registration_closed"):
+                hidden += 1
+        except Exception as e:
+            print(f"[nieuwbouw] Upsert mislukt voor {project.get('url')}: {e}", flush=True)
+            mislukt += 1
 
-        for scraper in nieuwbouw_scrapers:
-            if not configs.get(scraper.name, True):
-                print(f"[nieuwbouw] {scraper.name} uitgeschakeld — overgeslagen", flush=True)
-                continue
-
-            print(f"[nieuwbouw] === Start {scraper.name} ===", flush=True)
-            try:
-                projecten = scraper.scrape_projecten()
-
-                geslaagd = mislukt = hidden = 0
-                for project in projecten:
-                    try:
-                        db.table("nieuwbouw_projects").upsert(project, on_conflict="url").execute()
-                        all_scraped_urls.add(project["url"])
-                        geslaagd += 1
-                        if project.get("status") in ("sold_out", "rented_out", "under_option", "registration_closed"):
-                            hidden += 1
-                    except Exception as e:
-                        print(f"[nieuwbouw] Upsert mislukt voor {project.get('url')}: {e}", flush=True)
-                        mislukt += 1
-
-                print(
-                    f"[nieuwbouw] {scraper.name}: {geslaagd} opgeslagen "
-                    f"({hidden} verborgen status), {mislukt} mislukt",
-                    flush=True,
-                )
-                _safe_scraper_update(db, scraper.name, {
-                    "last_run":      nu,
-                    "last_count":    geslaagd,
-                    "status":        "actief",
-                    "error_message": None,
-                })
-
-            except Exception as e:
-                import traceback as _tb
-                print(f"[nieuwbouw] {scraper.name} FOUT: {e}", flush=True)
-                _tb.print_exc()
-                _safe_scraper_update(db, scraper.name, {
-                    "status":        "fout",
-                    "error_message": str(e)[:500],
-                })
-
-        _update_nieuwbouw_lifecycle(db, all_scraped_urls)
-
-    except Exception as e:
-        print(f"[nieuwbouw] ❌ Job fout: {e}", flush=True)
+    print(
+        f"[nieuwbouw] {scraper.name}: {geslaagd} opgeslagen "
+        f"({hidden} verborgen status), {mislukt} mislukt",
+        flush=True,
+    )
+    _safe_scraper_update(db, scraper.name, {
+        "last_run":      nu,
+        "last_count":    geslaagd,
+        "status":        "actief",
+        "error_message": None,
+    })
+    return scraped_urls
 
 
 if __name__ == '__main__':
@@ -553,23 +617,14 @@ if __name__ == '__main__':
     registreer_scrapers(alle_scrapers)
     storage = ListingStorage()
 
-    # Wekelijkse nieuwbouw-scrape via APScheduler (los van de 15-minuten loop)
+    # Nieuwbouw draait via dezelfde loop + scheduler-gateway (geen APScheduler meer,
+    # dus géén scrape bij container-start). Tier-timing zit in scheduler.scrape_scheduler.
     nieuwbouw_scrapers = [s for s in alle_scrapers if getattr(s, "category", "") == "nieuwbouw"]
-    if nieuwbouw_scrapers:
-        namen = [s.name for s in nieuwbouw_scrapers]
-        scheduler = BackgroundScheduler(timezone="Europe/Amsterdam")
-        scheduler.add_job(
-            scrape_nieuwbouw_job,
-            trigger="interval",
-            weeks=1,
-            args=[nieuwbouw_scrapers],
-            id="nieuwbouw_weekly",
-            next_run_time=datetime.now(timezone.utc),  # ook direct bij opstarten
-        )
-        scheduler.start()
-        print(f"[nieuwbouw] Wekelijkse scheduler gestart voor: {namen}", flush=True)
-    else:
-        print("[nieuwbouw] ⚠️ Geen nieuwbouw-scrapers gevonden — wekelijkse job overgeslagen", flush=True)
+    print(
+        f"[main] Scheduler-gateway actief — nieuwbouw: {[s.name for s in nieuwbouw_scrapers]}, "
+        f"realtime: {[s.name for s in alle_scrapers if s not in nieuwbouw_scrapers]}",
+        flush=True,
+    )
 
     while True:
         try:
@@ -593,37 +648,57 @@ if __name__ == '__main__':
 
             BaseScraper.clear_cache()
             combis = bouw_combis(scrapers, prefs)
-            alle_woningen = []
-            counts_per_scraper: dict = {}  # scraper.name → totaal gevonden listings
-            errors_per_scraper: dict = {}  # scraper.name → laatste foutmelding
+            enabled_names = {s.name for s in scrapers}
 
+            # Combis groeperen per scraper (één scheduler-beslissing per scraper, niet per combi)
+            combis_per_scraper: dict = {}
             for params in combis.values():
-                scraper = params["scraper"]
-                try:
-                    woningen = scraper.scrape(
-                        stad=params["stad"],
-                        min_prijs=params["min_prijs"],
-                        max_prijs=params["max_prijs"],
-                        types=params["types"],
-                        radius_km=params["radius_km"],
-                    )
-                except Exception as e:
-                    print(f"[scrapers] ❌ {scraper.name} fout: {e}", flush=True)
-                    errors_per_scraper[scraper.name] = str(e)[:500]
-                    asyncio.run(stuur_warning(
-                        f"⚠️ {scraper.name} fout!\n"
-                        f"Stad: {params['stad']}, Prijs: €{params['min_prijs']}-€{params['max_prijs']}\n"
-                        f"Fout: {e}"
-                    ))
-                    woningen = []
-                alle_woningen.extend(woningen)
-                counts_per_scraper[scraper.name] = counts_per_scraper.get(scraper.name, 0) + len(woningen)
+                combis_per_scraper.setdefault(params["scraper"].name, []).append(params)
 
-            update_scraper_stats(counts_per_scraper, errors_per_scraper)
+            alle_woningen = []
+            counts_per_scraper: dict = {}
+
+            # ── REALTIME scrapers — elk via de scheduler-gateway (15-min venster + lock) ──
+            for scraper in scrapers:
+                if getattr(scraper, "excluded_from_main_loop", False):
+                    continue
+                params_list = combis_per_scraper.get(scraper.name, [])
+                if not params_list:
+                    continue
+
+                def _run_realtime(sc=scraper, pl=params_list):
+                    out = []
+                    for p in pl:
+                        out += sc._scrape_impl(
+                            stad=p["stad"], min_prijs=p["min_prijs"],
+                            max_prijs=p["max_prijs"], types=p["types"],
+                        )
+                    return out
+
+                woningen = run_scraper(scraper.name, _run_realtime)
+                if woningen:
+                    alle_woningen.extend(woningen)
+                    counts_per_scraper[scraper.name] = len(woningen)
+
+            # ── NIEUWBOUW scrapers — via scheduler (maandag 05:00, 1x/week, 6u-lock) ──────
+            enabled_nieuwbouw = [s for s in nieuwbouw_scrapers if s.name in enabled_names]
+            nieuwbouw_urls: set = set()
+            nb_ran = 0
+            for ns in enabled_nieuwbouw:
+                res = run_scraper(ns.name, lambda sc=ns: _scrape_een_nieuwbouw(get_db(), sc))
+                if res is not None:
+                    nieuwbouw_urls |= res
+                    nb_ran += 1
+            # Lifecycle alleen als álle ingeschakelde nieuwbouwbronnen deze ronde liepen
+            # (anders zou de niet-gedraaide bron onterecht als 'missing' gemarkeerd worden).
+            if enabled_nieuwbouw and nb_ran == len(enabled_nieuwbouw):
+                _update_nieuwbouw_lifecycle(get_db(), nieuwbouw_urls)
+
+            update_scraper_stats(counts_per_scraper, {})
 
             _cs = BaseScraper._stats
             print(
-                f"[cache] Direct: {_cs['direct']}, FlareSolverr: {_cs['flare']}, "
+                f"[cache] Direct: {_cs['direct']}, Byparr: {_cs['flare']}, "
                 f"Cache hits: {_cs['cache']} (bespaard)",
                 flush=True
             )
@@ -632,6 +707,9 @@ if __name__ == '__main__':
             duplicaten = len(alle_woningen) - len(uniek)
             if duplicaten:
                 print(f"[main] {duplicaten} cross-site duplicaat/duplicaten verwijderd", flush=True)
+
+            # Verrijk met PDOK-geocoding (postcode/wijk/buurt/lat/lng) vóór opslag
+            asyncio.run(verrijk_met_geocoding(uniek))
 
             # Sla snapshot op in Parquet (historische data / DuckDB queries)
             storage.save_listings(uniek)

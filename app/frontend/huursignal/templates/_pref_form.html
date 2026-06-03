@@ -48,13 +48,26 @@
     </div>
   </div>
   <div class="field">
-    <label>Zoekradius <span style="font-weight:400;color:#a1a1aa">(leeg = alleen opgegeven stad)</span></label>
-    <select id="radius_km">
-      <option value="" {{ 'selected' if not pref.radius_km else '' }}>Alleen stad</option>
-      <option value="5"  {{ 'selected' if pref.radius_km == 5  else '' }}>5 km</option>
-      <option value="10" {{ 'selected' if pref.radius_km == 10 else '' }}>10 km</option>
-      <option value="25" {{ 'selected' if pref.radius_km == 25 else '' }}>25 km</option>
-    </select>
+    <label>Wijken <span style="font-weight:400;color:#a1a1aa">(leeg = alle wijken in de stad)</span></label>
+    {% set wps = wijken_per_stad | default({}) %}
+    {% set gekozen = pref.gewenste_wijken or [] %}
+    <div id="wijken-container">
+      {% if not wps %}
+      <p class="hint" id="wijken-leeg">Vul een stad in en sla op om wijken te kiezen.</p>
+      {% endif %}
+      {% for stad, wijken in wps.items() %}
+      <div class="wijk-stad" data-stad="{{ stad }}">
+        <p class="hint" style="margin:8px 0 4px">{{ stad }}</p>
+        <div class="checks">
+          {% for w in wijken %}
+          <label class="{{ 'active' if w in gekozen else '' }}" onclick="toggleActive(this)">
+            <input type="checkbox" class="wijk-cb" value="{{ w }}" {{ 'checked' if w in gekozen else '' }} style="pointer-events:none"> {{ w }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
   <div class="form-actions">
     <button class="btn btn-primary" style="width:auto" onclick="savePref('{{ redirect_to }}')">{{ submit_label }}</button>
