@@ -9,6 +9,7 @@ from storage import ListingStorage
 from validation import valideer_schema
 from pipeline import (
     INTERVAL,
+    SCHEDULER_POLL_SEC,
     load_scrapers,
     registreer_scrapers,
     scheduler_loop,
@@ -21,6 +22,7 @@ load_dotenv()
 # Backward compat (admin.py: from main import ...)
 __all__ = [
     "INTERVAL",
+    "SCHEDULER_POLL_SEC",
     "load_scrapers",
     "registreer_scrapers",
     "verrijk_met_geocoding",
@@ -48,6 +50,10 @@ if __name__ == "__main__":
         f"realtime: {[s.name for s in alle_scrapers if s not in nieuwbouw_scrapers]}",
         flush=True,
     )
-    print("[main] Async daemon loop (één event loop)", flush=True)
+    print(
+        f"[main] Async daemon loop (poll elke {SCHEDULER_POLL_SEC}s, "
+        f"scrape-interval {INTERVAL // 60}m via next_run_at)",
+        flush=True,
+    )
 
     asyncio.run(scheduler_loop(alle_scrapers, nieuwbouw_scrapers, storage))

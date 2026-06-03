@@ -2,8 +2,13 @@
 import asyncio
 import importlib
 import inspect
+import logging
+import os
 import pkgutil
+import time
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from db import get_db
 from deduplicator import Deduplicator
@@ -23,7 +28,9 @@ from shared.geocoder import (
 from storage import ListingStorage
 from validation import log_migration_warning, safe_scraper_update, valideer_listings
 
-INTERVAL = 7 * 60
+# Hoofdloop poll-cadans (≠ scraper next_run_at-interval; die blijft in scrape_scheduler)
+SCHEDULER_POLL_SEC = int(os.getenv("SCHEDULER_POLL_SEC", "120"))
+INTERVAL = 7 * 60  # realtime scrape interval na succesvolle run (next_run_at)
 
 
 def load_scrapers() -> list:
@@ -303,6 +310,8 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
 
         alle_woningen = []
         counts_per_scraper: dict = {}
+        any_gate_checked = False
+        any_scraper_executed = False
 
         # ── REALTIME scrapers — 1× per (site, stad), scheduler-lock per site ──
         for scraper in scrapers:
@@ -311,6 +320,7 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
             params_list = taken_by_scraper.get(scraper.name, [])
             if not params_list:
                 continue
+            any_gate_checked = True
 
             def _run_realtime(sc=scraper, pl=params_list):
                 out = []
@@ -336,6 +346,8 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
                 return out
 
             woningen = run_scraper(scraper.name, _run_realtime)
+            if woningen is not None:
+                any_scraper_executed = True
             if woningen:
                 alle_woningen.extend(woningen)
                 counts_per_scraper[scraper.name] = len(woningen)
@@ -345,12 +357,17 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
         nieuwbouw_urls: set = set()
         nb_ran = 0
         for ns in enabled_nieuwbouw:
+            any_gate_checked = True
             res = run_scraper(ns.name, lambda sc=ns: _scrape_een_nieuwbouw(get_db(), sc))
             if res is not None:
+                any_scraper_executed = True
                 nieuwbouw_urls |= res
                 nb_ran += 1
         if enabled_nieuwbouw and nb_ran == len(enabled_nieuwbouw):
             _update_nieuwbouw_lifecycle(get_db(), nieuwbouw_urls)
+
+        if any_gate_checked and not any_scraper_executed:
+            print("[SCHEDULER] no_due_scrapers", flush=True)
 
         update_scraper_stats(counts_per_scraper, {})
 
@@ -384,7 +401,7 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
             f"[main] ✅ Loop klaar — "
             f"gevalideerd: {gecheckt}, vervallen: {vervallen}, "
             f"gevonden: {totaal}, notificaties: {gestuurd}. "
-            f"Volgende check over 7 minuten...",
+            f"Volgende poll over {SCHEDULER_POLL_SEC}s...",
             flush=True,
         )
 
@@ -409,6 +426,22 @@ async def run_cycle(alle_scrapers: list, nieuwbouw_scrapers: list, storage: List
 
 async def scheduler_loop(alle_scrapers: list, nieuwbouw_scrapers: list, storage: ListingStorage) -> None:
     """Long-running daemon: één event loop voor geocode semaphores + inflight coalescing."""
+    cycle = 0
     while True:
-        await run_cycle(alle_scrapers, nieuwbouw_scrapers, storage)
-        await asyncio.sleep(INTERVAL)
+        cycle += 1
+        t0 = time.monotonic()
+        ts = datetime.now(timezone.utc).isoformat()
+        print(f"[main-loop] cycle_started ts={ts} cycle={cycle}", flush=True)
+        try:
+            await run_cycle(alle_scrapers, nieuwbouw_scrapers, storage)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[main-loop] cycle_error cycle=%s", cycle)
+        duration = round(time.monotonic() - t0, 1)
+        print(
+            f"[main-loop] cycle_finished duration_sec={duration} cycle={cycle}",
+            flush=True,
+        )
+        print(f"[main-loop] sleeping poll_sec={SCHEDULER_POLL_SEC}", flush=True)
+        await asyncio.sleep(SCHEDULER_POLL_SEC)

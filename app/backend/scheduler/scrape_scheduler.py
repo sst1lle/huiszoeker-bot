@@ -120,9 +120,14 @@ def _upsert_run(name: str, fields: dict) -> None:
 
 def should_run(name: str) -> bool:
     """True alleen als er geen actieve lock is én now_utc >= next_run_at."""
-    if _lock_actief(name):
-        logger.info(f"[SCHEDULER] Skipped scraper={name} reason=lock_active")
-        return False
+    now = _now()
+    try:
+        lock_until = _lock_until(name)
+        lock_active = bool(lock_until and lock_until > now)
+    except Exception as e:
+        logger.warning(f"[SCHEDULER] scrape_locks lees-fout voor {name} ({e})")
+        lock_active = True  # fail-closed
+        lock_until = None
 
     run = _get_run(name)
     nxt = _parse(run.get("next_run_at")) if run else None
@@ -130,17 +135,24 @@ def should_run(name: str) -> bool:
         nxt = _initial_next(name)
         _upsert_run(name, {"next_run_at": nxt.isoformat()})  # initialiseer schedule
 
-    if _now() >= nxt:
+    allowed = (not lock_active) and (now >= nxt)
+    logger.info(
+        f"[SCHEDULER] due_check scraper={name} now={now.isoformat()} "
+        f"next_run_at={nxt.isoformat()} lock_active={lock_active} allowed={allowed}",
+    )
+    if allowed:
         logger.info(f"[SCHEDULER] Allowed scraper={name} (next_run_at={nxt.isoformat()})")
-        return True
-    logger.info(f"[SCHEDULER] Skipped scraper={name} reason=not_due (next_run_at={nxt.isoformat()})")
-    return False
+    elif lock_active:
+        logger.info(f"[SCHEDULER] Skipped scraper={name} reason=lock_active")
+    else:
+        logger.info(f"[SCHEDULER] Skipped scraper={name} reason=not_due (next_run_at={nxt.isoformat()})")
+    return allowed
 
 
 def record_run(name: str, status: str, run_id: str | None = None) -> None:
     """
     Leg de run vast en bepaal next_run_at, gesplitst op uitkomst:
-      success → +interval (nieuwbouw anchor-based +7d, realtime now+15m)
+      success → +interval (nieuwbouw anchor-based +7d, realtime now+7m)
       failure → +backoff  (nieuwbouw +2u, realtime +30m)
     """
     now = _now()
@@ -180,8 +192,10 @@ def acquire_lock(name: str) -> bool:
         taken = db.table("scrape_locks").update({"lock_until": until}) \
                   .eq("scraper_name", name).lt("lock_until", now.isoformat()).execute()
         if taken.data:
+            logger.info(f"[SCHEDULER] lock_acquired scraper={name} until={until} (took expired)")
             return True  # verlopen lock overgenomen
         db.table("scrape_locks").insert({"scraper_name": name, "lock_until": until}).execute()
+        logger.info(f"[SCHEDULER] lock_acquired scraper={name} until={until}")
         return True      # nieuwe lock
     except Exception:
         return False     # actieve lock (unique violation) of DB-fout → niet draaien
@@ -190,6 +204,7 @@ def acquire_lock(name: str) -> bool:
 def release_lock(name: str) -> None:
     try:
         get_db().table("scrape_locks").delete().eq("scraper_name", name).execute()
+        logger.info(f"[SCHEDULER] lock_released scraper={name}")
     except Exception as e:
         logger.warning(f"[SCHEDULER] release_lock-fout voor {name} ({e}); TTL ruimt op")
 
