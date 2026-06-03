@@ -1,124 +1,225 @@
 # Huursignal
 
-A Dutch rental housing notification bot. Scrapes Pararius, Kamernet, and Funda every 15 minutes and sends Telegram messages when new listings match a user's criteria. Includes a multi-user web dashboard for managing preferences, browsing listings, and generating motivation letters.
+Huursignal is a Dutch rental housing notification system. It scrapes rental sites once per site/city, stores listings in Supabase, and sends Telegram notifications when SQL-filtered listings match a user's profile. It also includes a multi-user Flask dashboard, admin tooling, nieuwbouw tracking, and a motivation letter generator.
 
 ## Features
 
-- Scrapes Pararius, Kamernet, and Funda for rental listings
-- Sends Telegram notifications for new matches per user
-- Web dashboard with listing cards, filtering, and pagination
-- Multi-user: each user sets their own city, price range, housing types, and search radius
-- Admin panel to manage users and toggle scrapers on/off
-- Cloudflare bypass via Byparr (required for Pararius and Funda)
-- Historical snapshots stored as Parquet files (queryable with DuckDB)
-- Listing availability validated every 6 hours (404 → marked unavailable)
-- AI-powered motivation letter generator via Groq (LLaMA 3.1 70B)
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Bot loop | Python 3.11 |
-| Web app | Flask + Gunicorn |
-| Database & Auth | Supabase (PostgreSQL + Row Level Security) |
-| Telegram | python-telegram-bot |
-| Scraping | requests + BeautifulSoup4 |
-| Cloudflare bypass | Byparr |
-| Data lake | Parquet via pandas + PyArrow |
-| AI | Groq API (LLaMA 3.1 70B) |
-| Deployment | Docker Compose |
+- Scrapes Funda, Pararius, and Kamernet for rental listings.
+- Scrapes realtime rental sites every 7 minutes; nieuwbouw scrapers run weekly.
+- Runs each realtime scraper once per `(site, stad)` instead of once per user/profile.
+- Uses Supabase as the central filter layer for city, price, availability, sent-notification state, geo fields, and scheduler state.
+- Sends Telegram notifications for new matches and records them in `sent_notifications`.
+- Supports per-user city, price, woningtype, Telegram, and desired-wijk preferences.
+- Geocodes listings via PDOK and stores `stad`, `postcode`, `wijk`, `buurt`, `lat`, and `lng`.
+- Filters parking/garage listings out of user notifications.
+- Provides a Flask dashboard for listings, preferences, admin scraper toggles, and motivation letters.
+- Uses Byparr for Cloudflare-protected sites (Funda and Pararius).
+- Saves historical scrape snapshots as Parquet files for later analysis.
 
 ## Architecture
 
-Two processes share a single Docker image:
+Three Docker services are defined in `docker-compose.yml`:
 
-**`backend/main.py`** — runs every 15 minutes:
-1. Validates existing listings (HEAD request → 404 = mark unavailable)
-2. Scrapes Pararius, Kamernet, and Funda for each unique `stad + prijs + radius` combination across all users
-3. Upserts listings to Supabase and saves a Parquet snapshot
-4. Sends Telegram notifications for new matches, recording each in `sent_notifications`
+- `huiszoeker` — backend bot loop (`app/backend/main.py`)
+- `huiszoeker-web` — Flask web interface (`app/frontend/web.py`) served by Gunicorn
+- `byparr` — browser-based Cloudflare bypass service used by protected scrapers
 
-**`frontend/web.py`** — Flask app served by Gunicorn:
-- Auth via Supabase (`sign_in_with_password`, `sign_up`)
-- Dashboard with listing cards filtered to the user's preferences
-- Onboarding and settings for search criteria + Telegram setup
-- Admin panel (identified by `ADMIN_EMAIL` env var) — manage users and toggle scrapers
-- Motivatiebrief generator at `/motivatiebrief` — fills in personal details, calls Groq API, returns a ready-to-send letter
+### Backend Flow
 
-**Scrapers** (`backend/scrapers/`) extend `BaseScraper` and are auto-discovered — dropping a new file in the directory is enough to add a scraper.
+The bot loop runs every 7 minutes:
+
+1. Validate stale listings (`404` marks `beschikbaar=false`).
+2. Load active user preferences.
+3. Build a scrape plan from all user cities:
+   - one task per `(scraper, stad)`
+   - no per-user scrape loops
+   - no per-profile duplicate scrapes
+4. Run realtime scrapers through the scheduler gate and TTL locks.
+5. Deduplicate, geocode, save a Parquet snapshot, and upsert listings by unique `url`.
+6. Query listings per user using SQL filters.
+7. Apply only lightweight Python checks (sent state, parking markers, wijk/type checks) and send Telegram notifications.
+
+Example scrape plan:
+
+```text
+3 scrapers x 4 cities = 12 scrape tasks
+funda + utrecht
+pararius + utrecht
+kamernet + utrecht
+...
+```
+
+### Notification Filtering
+
+User notification queries are SQL-first:
+
+```sql
+SELECT *
+FROM listings
+WHERE stad = ANY(:user_steden)
+  AND prijs BETWEEN :min_prijs AND :max_prijs
+  AND beschikbaar = true
+ORDER BY created_at DESC
+LIMIT 1000;
+```
+
+The implementation uses Supabase/PostgREST filters (`.in_`, `.gte`, `.lte`, `.eq`) in `get_listings_for_user()`.
+
+### Scheduler
+
+Scheduler state is stored in Supabase:
+
+- `scrape_runs` — `last_run_at`, `next_run_at`, status, run ID
+- `scrape_locks` — TTL locks to prevent duplicate/overlapping scraper runs
+
+Realtime scrapers:
+
+- interval: 7 minutes
+- failure backoff: 30 minutes
+- lock TTL: 20 minutes
+
+Nieuwbouw scrapers:
+
+- interval: weekly
+- anchor: Monday 05:00 Europe/Amsterdam
+- lock TTL: 6 hours
+
+## Scrapers
+
+Scrapers live in `app/backend/scrapers/` and extend `BaseScraper`.
+
+Current realtime scrapers:
+
+- `funda`
+- `pararius`
+- `kamernet`
+
+Current nieuwbouw scrapers:
+
+- `nieuwbouw_nederland`
+- `nieuwbouw_nl`
+
+Important behavior:
+
+- Funda and Pararius do not use price filters in their URLs; price filtering happens in SQL per user.
+- Kamernet still uses price/type URL filters because they are cheap and useful on that site.
+- Parking/garage listings are filtered before notification using URL/type/address markers.
+- Scrapers are auto-discovered at startup and registered in `scraper_config`.
 
 ## Database
 
-Four tables in Supabase (schema in `supabase/schema.sql`):
+The canonical schema is in `supabase/schema.sql`; incremental changes are in `supabase/migrations/`.
 
-- `user_preferences` — per-user search criteria + Telegram chat ID
-- `listings` — scraped listings with availability tracking
-- `sent_notifications` — which listings have been sent to which users (prevents duplicates)
-- `scraper_config` — enabled/disabled state per scraper, updated after each run
+Core tables:
 
-Apply the schema manually via the Supabase SQL Editor.
+- `user_preferences` — per-user criteria and encrypted personal/Telegram fields
+- `listings` — canonical rental listings, unique by `url`
+- `sent_notifications` — one row per sent user/listing notification
+- `scraper_config` — enable/disable state and scraper metadata
+- `scrape_runs` / `scrape_locks` — scheduler state
+- `geocode_cache` — PDOK geocoding cache
+- `wijken_cache` — cached CBS/PDOK wijk data
+- `nieuwbouw_projects` — tracked new-build projects
 
-## Setup
+Useful listing indexes:
 
-### Environment variables (`.env`)
+- `idx_listings_stad`
+- `idx_listings_price`
+- `idx_listings_active`
+- `idx_listings_filter (stad, prijs, beschikbaar)`
+- `idx_listings_wijk`
+
+Apply migrations manually in the Supabase SQL Editor, or use:
+
+```bash
+./scripts/run_supabase_migration.sh supabase/migrations/011_listings_query_indexes.sql
+```
+
+That script requires `SUPABASE_DB_PASSWORD` in `.env`.
+
+## Environment Variables
 
 ```env
-TELEGRAM_TOKEN=        # Bot token from @BotFather
-ADMIN_CHAT_ID=         # Your Telegram chat ID (receives error warnings)
-SECRET_KEY=            # Flask session secret (any random string)
-SUPABASE_URL=          # Project URL from Supabase dashboard
-SUPABASE_KEY=          # service_role key (bypasses RLS for server-side ops)
-ADMIN_EMAIL=           # Email of the admin user
-DATA_DIR=              # Base path for Parquet datalake (default: /mnt/ssd)
-GROQ_API_KEY=          # API key from console.groq.com (required for motivatiebrief)
+TELEGRAM_TOKEN=          # Bot token from @BotFather
+ADMIN_CHAT_ID=           # Admin Telegram chat ID for warnings
+SECRET_KEY=              # Flask session secret
+SUPABASE_URL=            # Supabase project URL
+SUPABASE_KEY=            # service_role key for server-side operations
+SUPABASE_ANON_KEY=       # anon key for frontend/auth flows if needed
+SUPABASE_DB_PASSWORD=    # optional; only needed for scripts/run_supabase_migration.sh
+ADMIN_EMAIL=             # Admin user email
+ADMIN_PASSWORD=          # Optional bootstrap/admin credential
+DATA_DIR=                # Base path for datalake mount; default /mnt/ssd
+ENCRYPTION_KEY=          # Fernet key for encrypted PII fields
+GROQ_API_KEY=            # Required for motivation letter generation
+MAX_PAGES=3              # Max pages per realtime scraper
+SITE_URL=                # Public web URL if needed
 ```
 
-### Run
+## Run
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-Web interface available at `http://localhost:5000`.
+Web interface:
 
-### Rebuild only one service
+```text
+http://localhost:5000
+```
+
+Rebuild one service:
 
 ```bash
-docker compose up --build huiszoeker     # bot only
-docker compose up --build webinterface   # web only
+docker compose build huiszoeker && docker compose up -d huiszoeker
+docker compose build webinterface && docker compose up -d webinterface
+```
+
+Inspect logs:
+
+```bash
+docker logs -f huiszoeker
+docker logs -f byparr
+docker logs -f huiszoeker-web
 ```
 
 ## Project Structure
 
-```
+```text
 app/
-  backend/          # bot loop + scrapers
-    main.py
-    scrapers/       # pararius.py, kamernet.py, funda.py, base.py
+  backend/
+    main.py                  # bot loop: scrape, geocode, upsert, notify
+    scrape_plan.py           # one scrape task per site/city
+    scheduler/               # Supabase-backed run schedule and TTL locks
+    scrapers/                # Funda, Pararius, Kamernet, nieuwbouw scrapers
     deduplicator.py
-    storage.py
-  frontend/         # Flask web app
-    web.py
-    huursignal/     # blueprints, templates, static assets
-      routes/
-        auth.py
-        dashboard.py
-        preferences.py
-        admin.py
-        motivatiebrief.py
-  db.py             # shared Supabase client
-  requirements.txt
+    storage.py               # Parquet snapshots
+  frontend/
+    web.py                   # Flask entrypoint
+    huursignal/
+      routes/                # auth, dashboard, preferences, admin, motivatiebrief
+      templates/
+      static/
+  shared/
+    cities.py                # city normalization
+    geocoder.py              # PDOK geocoding + cache
+    wijken.py                # CBS/PDOK wijk lookup + cache
+  db.py                      # shared Supabase client
 supabase/
-  schema.sql        # run manually in Supabase SQL Editor
+  schema.sql
+  migrations/
 scripts/
-  migrate_json_to_parquet.py   # one-time migration from legacy JSON
-  migrate_json_to_supabase.py  # one-time user migration
+  run_supabase_migration.sh
+  migrate_json_to_parquet.py
+  migrate_json_to_supabase.py
 data/
-  datalake/         # Parquet snapshots (mounted from NVMe on Pi)
+  datalake/
 ```
 
 ## Adding a Scraper
 
-1. Create `app/backend/scrapers/yoursite.py`
-2. Define a class that extends `BaseScraper` and implements `scrape()`
-3. Restart the bot — it auto-discovers and registers the scraper in `scraper_config`
+1. Create `app/backend/scrapers/yoursite.py`.
+2. Define a `BaseScraper` subclass with a unique `name`.
+3. Implement `_scrape_impl(stad, min_prijs, max_prijs, types)`.
+4. Set class attributes such as `uses_types`, `uses_price_filter`, `flaresolverr_only`, and `category`.
+5. Restart the bot; it auto-discovers and registers the scraper in `scraper_config`.
