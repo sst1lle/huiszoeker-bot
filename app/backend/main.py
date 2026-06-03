@@ -22,7 +22,7 @@ from scheduler.scrape_scheduler import run_scraper
 os.environ['PYTHONUNBUFFERED'] = '1'
 load_dotenv()
 
-INTERVAL = 15 * 60
+INTERVAL = 7 * 60
 VALIDATIE_INTERVAL_UREN = 6
 
 # Eenmalige waarschuwing zodat migratie-berichten het log niet overspoelen
@@ -336,6 +336,12 @@ def get_enabled_scrapers(all_scrapers: list) -> list:
 
 _SKIP_TYPE_CHECK = {"funda", "pararius"}
 _NOTIFICATIE_LIMIT = 1000
+_PARKING_MARKERS = (
+    "parkeergelegenheid",
+    "parkeerplaats",
+    "parking",
+    "garage",
+)
 
 
 def _stad_filter_values(pref: dict) -> list[str]:
@@ -405,7 +411,7 @@ def get_listings_for_user(pref: dict) -> list:
     for listing in listings:
         if listing["id"] in al_gestuurd:
             continue
-        if "parkeergelegenheid" in (listing.get("url") or ""):
+        if _is_parking_listing(listing):
             continue
 
         source = listing.get("source", "")
@@ -428,6 +434,15 @@ def get_listings_for_user(pref: dict) -> list:
         )
 
     return nieuw
+
+
+def _is_parking_listing(listing: dict) -> bool:
+    """Voorkom dat parkeerplaatsen/garages als woning-notificatie worden aangeboden."""
+    url = (listing.get("url") or "").lower()
+    woning_type = (listing.get("type_woning") or "").lower()
+    adres = (listing.get("adres") or "").lower()
+    haystack = " ".join((url, woning_type, adres))
+    return any(marker in haystack for marker in _PARKING_MARKERS)
 
 
 def maak_bericht(listing: dict) -> str:
@@ -647,15 +662,24 @@ if __name__ == '__main__':
                 def _run_realtime(sc=scraper, pl=params_list):
                     out = []
                     for p in pl:
+                        prijs_log = (
+                            f"prijs={p['min_prijs']}-{p['max_prijs']}"
+                            if getattr(sc, "uses_price_filter", True)
+                            else "prijs=SQL-filter"
+                        )
                         print(
-                            f"[scrape] {sc.name} stad={p['stad']} "
-                            f"prijs={p['min_prijs']}-{p['max_prijs']}",
+                            f"[scrape] {sc.name} stad={p['stad']} {prijs_log}",
                             flush=True,
                         )
-                        out += sc._scrape_impl(
+                        gevonden = sc._scrape_impl(
                             stad=p["stad"], min_prijs=p["min_prijs"],
                             max_prijs=p["max_prijs"], types=p["types"],
                         )
+                        print(
+                            f"[scrape] {sc.name} stad={p['stad']} klaar: {len(gevonden)} listings",
+                            flush=True,
+                        )
+                        out += gevonden
                     return out
 
                 woningen = run_scraper(scraper.name, _run_realtime)
@@ -714,7 +738,7 @@ if __name__ == '__main__':
                 f"[main] ✅ Loop klaar — "
                 f"gevalideerd: {gecheckt}, vervallen: {vervallen}, "
                 f"gevonden: {totaal}, notificaties: {gestuurd}. "
-                f"Volgende check over 15 minuten...",
+                f"Volgende check over 7 minuten...",
                 flush=True
             )
 

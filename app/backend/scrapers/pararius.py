@@ -78,6 +78,7 @@ class ParariusScraper(BaseScraper):
     robots_txt_compliant = True
     request_delay_seconds = 2.0
     uses_types = False  # Pararius-URL heeft geen type-filter; retourneert altijd alle typen
+    uses_price_filter = False  # prijsfilter gebeurt centraal in SQL per user
     flaresolverr_only = True
 
     def _scrape_impl(
@@ -87,7 +88,7 @@ class ParariusScraper(BaseScraper):
         max_prijs: int,
         types: list[str],
     ) -> list[dict]:
-        base = f"{BASE_URL}/huurwoningen/{stad}/{min_prijs}-{max_prijs}"
+        base = f"{BASE_URL}/huurwoningen/{stad}"
 
         # Pararius toont standaard de nieuwste listings eerst; paginering via /page-N
         def page_url(page: int) -> str:

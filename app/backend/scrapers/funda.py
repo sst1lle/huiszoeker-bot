@@ -76,6 +76,7 @@ class FundaScraper(BaseScraper):
     robots_txt_compliant = True
     request_delay_seconds = 5.0
     uses_types = False
+    uses_price_filter = False
     flaresolverr_only = True
 
     FUNDA_TYPE_MAP = {
@@ -97,7 +98,6 @@ class FundaScraper(BaseScraper):
         base = (
             f"{BASE_URL}/zoeken/huur"
             f"?selected_area=%5B%22{stad_slug}%22%5D"
-            f"&price=%22-{max_prijs}%22"
             f"&sort=%22date_down%22"  # nieuwste eerst
         )
 

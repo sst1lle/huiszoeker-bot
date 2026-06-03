@@ -3,7 +3,7 @@ Centrale scraper-scheduler — single source of truth = next_run_at (UTC).
 
 Twee tiers:
   - nieuwbouw (heavy):  1x per week, anker maandag 05:00 Europe/Amsterdam (als UTC opgeslagen)
-  - realtime (light):   minimaal elke 15 minuten
+  - realtime (light):   minimaal elke 7 minuten
 
 Regels:
   should_run(name)  → True alleen als geen actieve lock én now_utc >= next_run_at
@@ -16,6 +16,7 @@ Alle tijden in UTC; alleen het maandag-05:00 anker wordt lokaal (Amsterdam) bere
 """
 import os
 import uuid
+import sys
 import logging
 import contextvars
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Scheduler-beslissingen moeten zichtbaar zijn in docker logs (de rest van de app print
 # naar stdout en er is geen globale logging-config). Eigen stdout-handler op INFO.
 if not logger.handlers:
-    _h = logging.StreamHandler()
+    _h = logging.StreamHandler(sys.stdout)
     _h.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(_h)
     logger.setLevel(logging.INFO)
@@ -40,7 +41,7 @@ _AMS = ZoneInfo("Europe/Amsterdam")
 NIEUWBOUW_SCRAPERS = {"nieuwbouw_nederland", "nieuwbouw_nl"}
 
 # Intervallen / backoff / lock-TTL per tier
-REALTIME_INTERVAL = timedelta(minutes=15)
+REALTIME_INTERVAL = timedelta(minutes=7)
 REALTIME_BACKOFF  = timedelta(minutes=30)
 REALTIME_LOCK_TTL = timedelta(minutes=20)
 NIEUWBOUW_INTERVAL = timedelta(days=7)
