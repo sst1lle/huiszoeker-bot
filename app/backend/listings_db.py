@@ -41,6 +41,10 @@ def _prepare_upsert_row(listing: dict, record: dict | None, nu: str) -> dict | N
 
     if record:
         updates = {"laatst_gevalideerd": nu, "beschikbaar": scrape_beschikbaar}
+        if not record.get("eerste_gezien"):
+            updates["eerste_gezien"] = nu
+        if not record.get("created_at"):
+            updates["created_at"] = record.get("eerste_gezien") or nu
         if not record.get("prijs"):
             for field in ("adres", "prijs", "oppervlakte", "type_woning", "foto_url"):
                 if listing.get(field) is not None:
@@ -59,6 +63,8 @@ def _prepare_upsert_row(listing: dict, record: dict | None, nu: str) -> dict | N
         row["url"] = listing["url"]
         row["source"] = record.get("source") or listing.get("source")
         row.update(updates)
+        row["eerste_gezien"] = updates.get("eerste_gezien") or record.get("eerste_gezien")
+        row["created_at"] = updates.get("created_at") or record.get("created_at")
         return row
 
     return {

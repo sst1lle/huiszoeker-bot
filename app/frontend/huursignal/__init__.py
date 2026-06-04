@@ -3,7 +3,7 @@ from flask import Flask
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from .helpers import fmt_prijs, listing_leeftijd, fmt_datum_kort
+from .helpers import fmt_prijs, listing_leeftijd, fmt_datum_kort, listing_eerste_gezien_ts
 
 
 def create_app():
@@ -14,6 +14,7 @@ def create_app():
 
     app.jinja_env.globals["fmt_prijs"] = fmt_prijs
     app.jinja_env.globals["listing_leeftijd"] = listing_leeftijd
+    app.jinja_env.globals["listing_eerste_gezien_ts"] = listing_eerste_gezien_ts
     app.jinja_env.globals["fmt_datum_kort"] = fmt_datum_kort
 
     from .routes.auth import auth_bp

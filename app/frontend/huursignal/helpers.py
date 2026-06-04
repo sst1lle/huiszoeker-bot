@@ -40,6 +40,15 @@ def _parse_ts(ts):
     return dt
 
 
+def listing_eerste_gezien_ts(listing: dict) -> str | None:
+    """Timestamp voor 'Online sinds' — fallback als eerste_gezien ontbreekt in DB."""
+    return (
+        listing.get("eerste_gezien")
+        or listing.get("created_at")
+        or listing.get("laatst_gevalideerd")
+    )
+
+
 def fmt_datum_kort(ts) -> str:
     """Geeft datum terug als '3 apr' (Nederlandse korte notatie)."""
     if not ts:

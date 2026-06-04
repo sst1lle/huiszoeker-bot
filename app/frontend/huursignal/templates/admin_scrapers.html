@@ -2,14 +2,22 @@
 {% block title %}Scraper beheer — Huursignal{% endblock %}
 {% block content %}
 <style>
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:#2563eb;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:#2563eb;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.test-result{font-size:13px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px}
-.test-head{font-weight:600;margin-bottom:4px}
-.test-err{color:#b91c1c;margin-top:6px}
-.test-warn{color:#92400e}
-.test-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
-.test-table th,.test-table td{text-align:left;padding:4px 6px;border-bottom:1px solid #eef2f7}
+.test-result{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:14px;line-height:1.55;color:var(--text);
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;
+}
+.test-head{font-size:14px;font-weight:600;margin-bottom:6px;color:var(--text)}
+.test-err{color:#b91c1c;margin-top:8px;font-size:13px;line-height:1.45}
+.test-warn{color:#92400e;font-size:13px}
+.test-hint{color:var(--muted);font-size:13px;margin-top:6px}
+.test-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;font-family:inherit}
+.test-table th{font-weight:600;color:var(--label);font-size:12px;text-transform:none}
+.test-table th,.test-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+.test-table tbody tr:last-child td{border-bottom:none}
+.test-table a{color:#2563eb;text-decoration:underline}
 </style>
 <div class="container">
   <div class="page-head">
@@ -136,7 +144,7 @@ async function testScraper(name) {
       }
       html += '</tbody></table>';
     } else if (!(d.errors && d.errors.length)) {
-      html += '<div class="hint">Geen listings gevonden.</div>';
+      html += '<div class="test-hint">Geen listings gevonden.</div>';
     }
     out.innerHTML = html;
   } catch (e) {

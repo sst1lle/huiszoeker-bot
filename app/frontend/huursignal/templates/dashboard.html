@@ -34,7 +34,8 @@
         {% set opp = l.oppervlakte %}
         {% set source = l.source or '' %}
         {% set url = l.url or '#' %}
-        {% set leeftijd_info = listing_leeftijd(l.eerste_gezien) %}
+        {% set eg_ts = listing_eerste_gezien_ts(l) %}
+        {% set leeftijd_info = listing_leeftijd(eg_ts) %}
         <div class="card">
           <a href="{{ url }}" target="_blank" rel="noopener">
             {% if foto %}
@@ -51,7 +52,7 @@
             <div class="card-prijs">{{ prijs }}<span style="font-size:13px;font-weight:400;color:#71717a">/maand</span></div>
             {% if opp %}<div class="card-meta">{{ opp }}&nbsp;m²</div>{% endif %}
             <div class="age-line {{ leeftijd_info.klasse }}">
-              {{ leeftijd_info.emoji }} Online sinds {{ fmt_datum_kort(l.eerste_gezien) }} · {{ leeftijd_info.label }}
+              {{ leeftijd_info.emoji }} Online sinds {{ fmt_datum_kort(eg_ts) }} · {{ leeftijd_info.label }}
             </div>
             <a href="{{ url }}" target="_blank" rel="noopener" class="card-link">Bekijk woning &rarr;</a>
           </div>

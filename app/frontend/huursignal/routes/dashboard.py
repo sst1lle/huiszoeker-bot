@@ -120,7 +120,11 @@ def dashboard():
 
         if leeftijd in ("1", "3", "7"):
             cutoff = (datetime.now(timezone.utc) - timedelta(days=int(leeftijd))).isoformat()
-            query = query.gte("eerste_gezien", cutoff)
+            # Ook listings zonder eerste_gezien (legacy) op laatst_gevalideerd
+            query = query.or_(
+                f"eerste_gezien.gte.{cutoff},"
+                f"and(eerste_gezien.is.null,laatst_gevalideerd.gte.{cutoff})",
+            )
 
         result   = query.execute()
         raw      = result.data or []

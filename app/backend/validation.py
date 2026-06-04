@@ -87,32 +87,48 @@ def _valideer_listings_sync(listings: list[dict], nu: str) -> tuple[int, int]:
     db = get_db()
     vervallen = 0
     checks = [(lst["id"], _url_nog_online(lst["url"])) for lst in listings]
-    return _valideer_listings_persist(db, listings, checks, nu, vervallen)
+    try:
+        return _valideer_listings_persist(db, listings, checks, nu, vervallen)
+    except Exception as e:
+        print(f"[validatie] persist mislukt (cycle gaat door): {e}", flush=True)
+        return len(listings), vervallen
+
+
+def _persist_validatie_updates(db, ids: list[str], fields: dict, label: str) -> None:
+    """Batch UPDATE (geen upsert — partial upsert zet ontbrekende NOT NULL-kolommen op NULL)."""
+    if not ids:
+        return
+    for i in range(0, len(ids), _VALIDATIE_UPSERT_BATCH):
+        chunk = ids[i : i + _VALIDATIE_UPSERT_BATCH]
+        try:
+            db.table("listings").update(fields).in_("id", chunk).execute()
+        except Exception as e:
+            print(
+                f"[validatie] batch update mislukt ({label}, {len(chunk)} ids): {e}",
+                flush=True,
+            )
 
 
 def _valideer_listings_persist(
     db, listings: list[dict], checks: list[tuple], nu: str, vervallen: int,
 ) -> tuple[int, int]:
-    ids = [lst["id"] for lst in listings]
-    by_id: dict = {}
-    for i in range(0, len(ids), UPSERT_BATCH):
-        chunk = ids[i : i + UPSERT_BATCH]
-        for row in db.table("listings").select("*").in_("id", chunk).execute().data or []:
-            by_id[row["id"]] = row
+    online_ids: list[str] = []
+    offline_ids: list[str] = []
 
-    rows = []
     for lid, nog_online in checks:
-        row = dict(by_id[lid])
-        row["laatst_gevalideerd"] = nu
-        if not nog_online:
-            row["beschikbaar"] = False
+        if nog_online:
+            online_ids.append(lid)
+        else:
+            offline_ids.append(lid)
             vervallen += 1
-        rows.append(row)
 
-    for i in range(0, len(rows), _VALIDATIE_UPSERT_BATCH):
-        db.table("listings").upsert(
-            rows[i : i + _VALIDATIE_UPSERT_BATCH], on_conflict="id",
-        ).execute()
+    _persist_validatie_updates(db, online_ids, {"laatst_gevalideerd": nu}, "online")
+    _persist_validatie_updates(
+        db,
+        offline_ids,
+        {"laatst_gevalideerd": nu, "beschikbaar": False},
+        "offline",
+    )
 
     print(
         f"[validatie] {vervallen} vervallen, {len(listings) - vervallen} nog online",
@@ -128,12 +144,27 @@ async def valideer_listings():
 
     result = (
         db.table("listings")
-        .select("id, url")
+        .select("id, url, source")
         .eq("beschikbaar", True)
         .lt("laatst_gevalideerd", cutoff)
         .execute()
     )
-    listings = result.data or []
+    raw = result.data or []
+    listings = []
+    skipped = 0
+    for lst in raw:
+        if not (lst.get("url") or "").strip():
+            skipped += 1
+            print(f"[validatie] skip_geen_url id={lst.get('id')}", flush=True)
+            continue
+        if not (lst.get("source") or "").strip():
+            skipped += 1
+            print(f"[validatie] skip_geen_source id={lst.get('id')}", flush=True)
+            continue
+        listings.append(lst)
+
+    if skipped:
+        print(f"[validatie] {skipped} listing(s) overgeslagen (geen url/source)", flush=True)
 
     if not listings:
         return 0, 0
@@ -154,4 +185,8 @@ async def valideer_listings():
         return lst["id"], ok
 
     checks = await asyncio.gather(*(_check_one(lst) for lst in listings))
-    return _valideer_listings_persist(db, listings, checks, nu, 0)
+    try:
+        return _valideer_listings_persist(db, listings, checks, nu, 0)
+    except Exception as e:
+        print(f"[validatie] persist mislukt (cycle gaat door): {e}", flush=True)
+        return len(listings), 0
